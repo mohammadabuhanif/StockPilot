@@ -1,0 +1,5 @@
+{
+  "name": "StockPilot",
+  "description": "A modern inventory management app for small shops. Track products, sales, and stock levels with real-time updates and low-stock alerts.",
+  "requestFramePermissions": []
+}

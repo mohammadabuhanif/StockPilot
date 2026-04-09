@@ -1,0 +1,203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: products
+    // Fields:
+    //   - name: string (required, 1-100 chars)
+    //   - category: string (required, 1-50 chars)
+    //   - price: number (required, > 0)
+    //   - cost: number (required, > 0)
+    //   - stock: int (required, >= 0)
+    //   - minStock: int (required, >= 0)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: sales
+    // Fields:
+    //   - productId: string (required)
+    //   - productName: string (required)
+    //   - quantity: int (required, > 0)
+    //   - totalPrice: number (required, > 0)
+    //   - totalProfit: number (required)
+    //   - timestamp: timestamp (required)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "abuhanifindiabased@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'category', 'price', 'cost', 'stock', 'minStock', 'updatedAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.category is string && data.category.size() > 0 && data.category.size() < 100 &&
+             data.price is number && data.price >= 0 &&
+             data.cost is number && data.cost >= 0 &&
+             data.stock is number && data.stock >= 0 &&
+             data.minStock is number && data.minStock >= 0 &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 1000)) &&
+             (!('description' in data) || (data.description is string && data.description.size() < 2000)) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 2000)) &&
+             (!('isFeatured' in data) || data.isFeatured is bool) &&
+             (!('barcode' in data) || (data.barcode is string && data.barcode.size() < 100)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidStockLog(data) {
+      return data.keys().hasAll(['type', 'amount', 'previousStock', 'newStock', 'timestamp']) &&
+             data.type in ['addition', 'sale', 'adjustment', 'replacement', 'issue'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.previousStock is number &&
+             data.newStock is number &&
+             data.timestamp is timestamp &&
+             (!('note' in data) || (data.note is string && data.note.size() < 1000));
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['productId', 'productName', 'quantity', 'unitPrice', 'totalPrice', 'totalProfit', 'timestamp']) &&
+             data.productId is string &&
+             data.productName is string && data.productName.size() > 0 &&
+             data.quantity is number && data.quantity > 0 &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.totalPrice is number && data.totalPrice >= 0 &&
+             data.totalProfit is number &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidNote(data) {
+      return data.keys().hasAll(['title', 'content', 'updatedAt', 'createdAt', 'userId']) &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.content is string && data.content.size() < 10000 &&
+             data.updatedAt is timestamp &&
+             data.createdAt is timestamp &&
+             (!('color' in data) || (data.color is string && data.color.size() < 50)) &&
+             (!('style' in data) || (data.style is string && data.style.size() < 100)) &&
+             (!('fontSize' in data) || (data.fontSize is string && data.fontSize.size() < 50));
+    }
+
+    function isValidIdea(data) {
+      return data.keys().hasAll(['content', 'source', 'createdAt', 'userId']) &&
+             data.userId == request.auth.uid &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 2000 &&
+             data.source in ['ai', 'user'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidService(data) {
+      return data.keys().hasAll(['name', 'category', 'basePrice']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.category in ['printing', 'document', 'other'] &&
+             data.basePrice is number && data.basePrice >= 0;
+    }
+
+    function isValidServiceOrder(data) {
+      return data.keys().hasAll(['serviceId', 'serviceName', 'customerName', 'customerPhone', 'status', 'price', 'createdAt', 'updatedAt']) &&
+             data.serviceId is string &&
+             data.serviceName is string &&
+             data.customerName is string && data.customerName.size() > 0 &&
+             data.customerPhone is string &&
+             data.status in ['pending', 'processing', 'completed', 'delivered'] &&
+             data.price is number && data.price >= 0 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['title', 'category', 'amount', 'date']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.category in ['rent', 'utilities', 'supplies', 'marketing', 'other'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.date is timestamp &&
+             (!('note' in data) || (data.note is string && data.note.size() < 1000));
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['name', 'phone', 'totalSpent', 'loyaltyPoints', 'createdAt', 'lastVisit']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.phone is string &&
+             data.totalSpent is number && data.totalSpent >= 0 &&
+             data.loyaltyPoints is number && data.loyaltyPoints >= 0 &&
+             data.createdAt is timestamp &&
+             data.lastVisit is timestamp &&
+             (!('email' in data) || (data.email is string && data.email.size() < 200)) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 2000));
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated() || resource.data.isFeatured == true;
+      allow create: if isAdmin() && isValidProduct(request.resource.data);
+      allow update: if isAdmin() && isValidProduct(request.resource.data);
+      allow delete: if isAdmin();
+
+      match /stockHistory/{logId} {
+        allow read: if isAuthenticated();
+        allow create: if isAdmin() && isValidStockLog(request.resource.data);
+        allow update, delete: if false; // Logs are immutable
+      }
+    }
+
+    match /sales/{saleId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidSale(request.resource.data);
+      allow update: if false; // Sales records are immutable
+      allow delete: if isAdmin();
+    }
+
+    match /notes/{noteId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidNote(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidNote(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /ideas/{ideaId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidIdea(request.resource.data);
+      allow update: if false; // Ideas are immutable
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /services/{serviceId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidService(request.resource.data);
+      allow update: if isAdmin() && isValidService(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /serviceOrders/{orderId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidServiceOrder(request.resource.data);
+      allow update: if isAuthenticated() && isValidServiceOrder(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidExpense(request.resource.data);
+      allow update: if isAdmin() && isValidExpense(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /customers/{customerId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidCustomer(request.resource.data);
+      allow update: if isAuthenticated() && isValidCustomer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}
