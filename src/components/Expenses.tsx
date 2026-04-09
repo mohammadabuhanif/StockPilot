@@ -10,6 +10,7 @@ export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [deletingExpense, setDeletingExpense] = useState<Expense | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
   
   const [formData, setFormData] = useState({
@@ -56,9 +57,9 @@ export default function Expenses() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this expense record?')) return;
     try {
       await deleteDoc(doc(db, 'expenses', id));
+      setDeletingExpense(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'expenses');
     }
@@ -162,7 +163,7 @@ export default function Expenses() {
                     <Edit2 size={16} />
                   </button>
                   <button
-                    onClick={() => handleDelete(expense.id)}
+                    onClick={() => setDeletingExpense(expense)}
                     className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-400 hover:text-red-500 transition-colors"
                   >
                     <Trash2 size={16} />
@@ -294,6 +295,48 @@ export default function Expenses() {
                     </button>
                   </div>
                 </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deletingExpense && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeletingExpense(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl overflow-hidden p-8 text-center"
+            >
+              <div className="w-20 h-20 bg-red-50 dark:bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 size={40} className="text-red-600" />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">Delete Expense?</h3>
+              <p className="text-slate-500 dark:text-slate-400 mb-8">
+                Are you sure you want to delete <span className="font-bold text-slate-900 dark:text-white">"{deletingExpense.title}"</span>? This action cannot be undone.
+              </p>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setDeletingExpense(null)}
+                  className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleDelete(deletingExpense.id)}
+                  className="flex-1 px-6 py-4 rounded-2xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20 transition-all"
+                >
+                  Delete
+                </button>
               </div>
             </motion.div>
           </div>

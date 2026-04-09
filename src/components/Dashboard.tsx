@@ -3,7 +3,7 @@ import { Product, Sale, ServiceOrder, Expense, Customer } from '../types';
 import { TrendingUp, DollarSign, Package, ShoppingBag, ArrowUpRight, ArrowDownRight, Zap, Clock, Users, TrendingDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { format, startOfDay, subDays, isSameDay } from 'date-fns';
-import { cn } from '../lib/utils';
+import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import gsap from 'gsap';
 
 interface DashboardProps {

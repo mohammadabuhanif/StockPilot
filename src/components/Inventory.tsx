@@ -29,7 +29,7 @@ import {
   Barcode as BarcodeIcon,
   Printer
 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import gsap from 'gsap';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isSameDay } from 'date-fns';
@@ -45,10 +45,13 @@ export default function Inventory({ products }: InventoryProps) {
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
   const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
   const [printingProduct, setPrintingProduct] = useState<Product | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [stockHistory, setStockHistory] = useState<StockLog[]>([]);
+  const [logToDelete, setLogToDelete] = useState<{logId: string, productId: string} | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'price-low' | 'price-high' | 'stock-low' | 'stock-high' | 'newest'>('newest');
   const [loading, setLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const groupedHistory = useMemo(() => {
     const groups: { [key: string]: StockLog[] } = {};
@@ -68,6 +71,15 @@ export default function Inventory({ products }: InventoryProps) {
       return acc;
     }, { totalAdded: 0, totalSold: 0 });
   }, [stockHistory]);
+
+  const handleDeleteLog = async (logId: string, productId: string) => {
+    try {
+      await deleteDoc(doc(db, 'products', productId, 'stockHistory', logId));
+      setLogToDelete(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `products/${productId}/stockHistory/${logId}`);
+    }
+  };
 
   const inventoryStats = useMemo(() => {
     const totalProducts = products.length;
@@ -303,7 +315,7 @@ export default function Inventory({ products }: InventoryProps) {
   }, [products.length]);
 
   const resetAllDates = async () => {
-    if (!confirm('Are you sure you want to reset all products\' added dates to today? This cannot be undone.')) return;
+    setShowResetConfirm(false);
     setLoading(true);
     setError(null);
     try {
@@ -314,7 +326,8 @@ export default function Inventory({ products }: InventoryProps) {
         })
       );
       await Promise.all(batchPromises);
-      alert('All product dates have been reset to today.');
+      setSuccessMessage('All product dates have been reset to today.');
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
       console.error("Inventory resetAllDates error:", error);
       setError(error instanceof Error ? error.message : String(error));
@@ -467,7 +480,7 @@ export default function Inventory({ products }: InventoryProps) {
             </div>
             
             <button
-              onClick={resetAllDates}
+              onClick={() => setShowResetConfirm(true)}
               className="p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl transition-all"
               title="Reset All Dates to Today"
             >
@@ -569,7 +582,7 @@ export default function Inventory({ products }: InventoryProps) {
                     </span>
                     <span className="flex items-center gap-1">
                       <History size={10} />
-                      Modified: {product.updatedAt ? format(product.updatedAt.toDate(), 'MMM dd, HH:mm') : 'Never'}
+                      Modified: {product.updatedAt ? format(product.updatedAt.toDate(), 'MMM dd, ') + formatAppTime(product.updatedAt.toDate(), false) : 'Never'}
                     </span>
                   </div>
                   <button 
@@ -628,7 +641,8 @@ export default function Inventory({ products }: InventoryProps) {
 
       {/* Desktop Table View */}
       <div className="hidden lg:block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-        <table className="w-full text-left border-collapse">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
               <th className="px-6 py-4 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Product Info</th>
@@ -746,7 +760,7 @@ export default function Inventory({ products }: InventoryProps) {
                       {product.updatedAt ? format(product.updatedAt.toDate(), 'MMM dd, yyyy') : 'Never'}
                     </span>
                     <span className="text-[9px] text-slate-400 dark:text-slate-500 font-medium">
-                      {product.updatedAt ? format(product.updatedAt.toDate(), 'HH:mm') : '--:--'}
+                      {product.updatedAt ? formatAppTime(product.updatedAt.toDate(), false) : '--:--'}
                     </span>
                   </div>
                 </td>
@@ -756,7 +770,7 @@ export default function Inventory({ products }: InventoryProps) {
                       {product.createdAt ? (isSameDay(product.createdAt.toDate(), new Date()) ? 'Today' : format(product.createdAt.toDate(), 'MMM dd, yyyy')) : 'Pre-History'}
                     </span>
                     <span className="text-[9px] text-slate-400 dark:text-slate-500 font-medium">
-                      {product.createdAt ? format(product.createdAt.toDate(), 'HH:mm') : '--:--'}
+                      {product.createdAt ? formatAppTime(product.createdAt.toDate(), false) : '--:--'}
                     </span>
                   </div>
                 </td>
@@ -799,7 +813,8 @@ export default function Inventory({ products }: InventoryProps) {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {/* Side Drawer (Proper Treatment for Add/Edit) */}
@@ -1174,7 +1189,7 @@ export default function Inventory({ products }: InventoryProps) {
                                       {log.type === 'addition' ? 'Stock Inflow' : log.type === 'sale' ? 'Stock Outflow' : 'Adjustment'}
                                     </span>
                                     <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
-                                      {log.timestamp ? format(log.timestamp.toDate(), 'HH:mm') : '--:--'}
+                                      {log.timestamp ? formatAppTime(log.timestamp.toDate(), false) : '--:--'}
                                     </span>
                                   </div>
                                   <div className={cn(
@@ -1189,9 +1204,18 @@ export default function Inventory({ products }: InventoryProps) {
                                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                                   {log.note}
                                 </p>
-                                <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 dark:text-slate-500">
-                                  <Package size={10} />
-                                  Resulting Stock: {log.newStock}
+                                <div className="mt-2 flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 dark:text-slate-500">
+                                    <Package size={10} />
+                                    Resulting Stock: {log.newStock}
+                                  </div>
+                                  <button
+                                    onClick={() => setLogToDelete({ logId: log.id, productId: historyProduct.id })}
+                                    className="p-1 text-slate-300 hover:text-red-500 transition-colors"
+                                    title="Delete Log"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -1204,6 +1228,44 @@ export default function Inventory({ products }: InventoryProps) {
               </div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* Log Delete Confirmation */}
+      <AnimatePresence>
+        {logToDelete && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-8 text-center">
+                <div className="w-20 h-20 bg-red-50 dark:bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Trash2 size={40} className="text-red-600" />
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">Delete Stock Log?</h3>
+                <p className="text-slate-500 dark:text-slate-400 mb-8">
+                  This will remove the log entry. It will NOT revert the stock change.
+                </p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setLogToDelete(null)}
+                    className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleDeleteLog(logToDelete.logId, logToDelete.productId)}
+                    className="flex-1 px-6 py-4 rounded-2xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20 transition-all"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -1341,6 +1403,56 @@ export default function Inventory({ products }: InventoryProps) {
           </div>
         </div>
       )}
+      {/* Reset Dates Confirmation */}
+      <AnimatePresence>
+        {showResetConfirm && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 rounded-[2rem] p-8 w-full max-w-md shadow-2xl border border-slate-200 dark:border-slate-800 text-center"
+            >
+              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/10 rounded-full flex items-center justify-center mx-auto mb-6 text-amber-500">
+                <AlertTriangle size={40} />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">Reset All Dates?</h3>
+              <p className="text-slate-500 dark:text-slate-400 mb-8">
+                This will set the "Added Date" of <span className="font-bold text-slate-900 dark:text-white">all {products.length} products</span> to today. This action is permanent and cannot be undone.
+              </p>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setShowResetConfirm(false)}
+                  className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={resetAllDates}
+                  className="flex-1 py-4 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold shadow-lg shadow-amber-200 dark:shadow-none transition-all"
+                >
+                  Reset All
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Success Message Toast */}
+      <AnimatePresence>
+        {successMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200] bg-emerald-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-2 font-bold"
+          >
+            <CheckCircle2 size={20} />
+            {successMessage}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

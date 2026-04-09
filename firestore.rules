@@ -134,6 +134,15 @@ service cloud.firestore {
              (!('notes' in data) || (data.notes is string && data.notes.size() < 2000));
     }
 
+    function isValidSettings(data) {
+      return data.keys().hasAll(['shopName']) &&
+             data.shopName is string && data.shopName.size() > 0 && data.shopName.size() < 100 &&
+             (!('shopAddress' in data) || (data.shopAddress is string && data.shopAddress.size() < 500)) &&
+             (!('shopPhone' in data) || (data.shopPhone is string && data.shopPhone.size() < 50)) &&
+             (!('shopEmail' in data) || (data.shopEmail is string && data.shopEmail.size() < 200)) &&
+             (!('memoFooter' in data) || (data.memoFooter is string && data.memoFooter.size() < 500));
+    }
+
     match /products/{productId} {
       allow read: if isAuthenticated() || resource.data.isFeatured == true;
       allow create: if isAdmin() && isValidProduct(request.resource.data);
@@ -194,6 +203,11 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidCustomer(request.resource.data);
       allow update: if isAuthenticated() && isValidCustomer(request.resource.data);
       allow delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidSettings(request.resource.data);
     }
 
     match /test/connection {

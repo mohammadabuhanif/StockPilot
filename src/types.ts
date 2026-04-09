@@ -108,3 +108,11 @@ export interface DashboardStats {
   lowStockCount: number;
   topSellingProducts: { name: string; sales: number }[];
 }
+
+export interface Settings {
+  shopName: string;
+  shopAddress?: string;
+  shopPhone?: string;
+  shopEmail?: string;
+  memoFooter?: string;
+}

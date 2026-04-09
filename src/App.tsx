@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { auth, signInWithPopup, googleProvider, signOut, onSnapshot, collection, db, query, orderBy, limit, handleFirestoreError, OperationType, getDocs, addDoc } from './firebase';
+import { auth, signInWithPopup, googleProvider, signOut, onSnapshot, collection, db, query, orderBy, limit, handleFirestoreError, OperationType, getDocs, addDoc, doc } from './firebase';
 import { User } from 'firebase/auth';
 import { LayoutDashboard, Package, ShoppingCart, LogOut, AlertTriangle, TrendingUp, DollarSign, PackagePlus, X, Store, Menu, Moon, Sun, Heart, Zap, CloudCheck, Users, Receipt } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -21,14 +21,15 @@ import ServiceCenter from './components/ServiceCenter';
 import Expenses from './components/Expenses';
 import Customers from './components/Customers';
 import Storefront from './components/Storefront';
+import Settings from './components/Settings';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Logo } from './components/Logo';
 import { HeartZap } from './components/HeartZap';
-import { Product, Sale, ServiceOrder, Expense, Customer, Service } from './types';
+import { Product, Sale, ServiceOrder, Expense, Customer, Service, Settings as SettingsType } from './types';
 import gsap from 'gsap';
 import { motion, AnimatePresence } from 'motion/react';
 
-type Tab = 'dashboard' | 'inventory' | 'sales' | 'services' | 'expenses' | 'customers' | 'personal';
+type Tab = 'dashboard' | 'inventory' | 'sales' | 'services' | 'expenses' | 'customers' | 'personal' | 'settings';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -47,6 +48,7 @@ export default function App() {
   const [services, setServices] = useState<Service[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [settings, setSettings] = useState<SettingsType | null>(null);
   const [loading, setLoading] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -149,6 +151,14 @@ export default function App() {
       handleFirestoreError(err, OperationType.GET, 'customers');
     });
 
+    const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
+      if (docSnap.exists()) {
+        setSettings(docSnap.data() as SettingsType);
+      }
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'settings/global');
+    });
+
     return () => {
       productsUnsubscribe();
       salesUnsubscribe();
@@ -156,6 +166,7 @@ export default function App() {
       servicesUnsubscribe();
       expensesUnsubscribe();
       customersUnsubscribe();
+      settingsUnsubscribe();
     };
   }, [user, isShopRoute]);
 
@@ -282,6 +293,12 @@ export default function App() {
             active={activeTab === 'personal'}
             onClick={() => setActiveTab('personal')}
           />
+          <NavItem
+            icon={<LayoutDashboard size={20} />}
+            label="Settings"
+            active={activeTab === 'settings'}
+            onClick={() => setActiveTab('settings')}
+          />
           <div className="pt-4 pb-2">
             <p className="px-4 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Public</p>
           </div>
@@ -364,11 +381,12 @@ export default function App() {
             <ErrorBoundary>
               {activeTab === 'dashboard' && <Dashboard products={products} sales={sales} serviceOrders={serviceOrders} expenses={expenses} customers={customers} />}
               {activeTab === 'inventory' && <Inventory products={products} />}
-              {activeTab === 'sales' && <Sales products={products} sales={sales} customers={customers} services={services} />}
+              {activeTab === 'sales' && <Sales products={products} sales={sales} customers={customers} services={services} settings={settings} />}
               {activeTab === 'services' && <ServiceCenter />}
               {activeTab === 'expenses' && <Expenses />}
               {activeTab === 'customers' && <Customers />}
               {activeTab === 'personal' && <PersonalCenter products={products} sales={sales} />}
+              {activeTab === 'settings' && <Settings />}
             </ErrorBoundary>
           </div>
         </div>
@@ -408,6 +426,7 @@ export default function App() {
               <MenuButton icon={<Receipt size={22} />} label="Expenses" active={activeTab === 'expenses'} onClick={() => { setActiveTab('expenses'); setIsMobileMenuOpen(false); }} color="red" />
               <MenuButton icon={<Users size={22} />} label="Customers" active={activeTab === 'customers'} onClick={() => { setActiveTab('customers'); setIsMobileMenuOpen(false); }} color="blue" />
               <MenuButton icon={<Heart size={22} />} label="Personal" active={activeTab === 'personal'} onClick={() => { setActiveTab('personal'); setIsMobileMenuOpen(false); }} color="pink" />
+              <MenuButton icon={<LayoutDashboard size={22} />} label="Settings" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }} color="blue" />
             </div>
 
             <div className="space-y-3 mb-8">

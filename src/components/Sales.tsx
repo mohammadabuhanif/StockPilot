@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { db, collection, addDoc, updateDoc, doc, Timestamp, handleFirestoreError, OperationType } from '../firebase';
-import { Product, Sale, Customer, Service } from '../types';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Package, AlertCircle, CheckCircle2, History, X, Filter, User, UserPlus, Zap, Barcode, Printer, Receipt } from 'lucide-react';
+import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, handleFirestoreError, OperationType } from '../firebase';
+import { Product, Sale, Customer, Service, Settings } from '../types';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Package, AlertCircle, CheckCircle2, History, X, Filter, User, UserPlus, Zap, Barcode, Printer, Receipt, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
-import { cn } from '../lib/utils';
+import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface SalesProps {
@@ -11,15 +11,16 @@ interface SalesProps {
   sales: Sale[];
   customers: Customer[];
   services: Service[];
+  settings: Settings | null;
 }
 
 interface CartItem {
   product: Product;
   quantity: number;
-  negotiatedPrice: number;
+  negotiatedPrice: number | string;
 }
 
-export default function Sales({ products, sales, customers, services }: SalesProps) {
+export default function Sales({ products, sales, customers, services, settings }: SalesProps) {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -27,10 +28,14 @@ export default function Sales({ products, sales, customers, services }: SalesPro
   const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'price-low' | 'price-high' | 'stock-low' | 'stock-high'>('name-asc');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPrintMessage, setShowPrintMessage] = useState(false);
   const [success, setSuccess] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [receivedAmount, setReceivedAmount] = useState<number | string>('');
+  const [discount, setDiscount] = useState<number | string>(0);
+  const [finalTotalInput, setFinalTotalInput] = useState<string>('');
+  const [saleToDelete, setSaleToDelete] = useState<string | null>(null);
   const [lastSale, setLastSale] = useState<{
     items: CartItem[];
     total: number;
@@ -38,6 +43,7 @@ export default function Sales({ products, sales, customers, services }: SalesPro
     change: number;
     customer: Customer | null;
     timestamp: Date;
+    discount: number;
   } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
@@ -60,7 +66,7 @@ export default function Sales({ products, sales, customers, services }: SalesPro
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart, loading]);
+  }, [cart, loading, discount]);
 
   // Focus barcode input on mount and periodically to ensure it's always ready
   useEffect(() => {
@@ -106,8 +112,16 @@ export default function Sales({ products, sales, customers, services }: SalesPro
     });
   }, [products, searchQuery, sortBy]);
 
-  const cartTotal = cart.reduce((sum, item) => sum + (item.negotiatedPrice * item.quantity), 0);
+  const cartSubtotal = cart.reduce((sum, item) => sum + (Number(item.negotiatedPrice) * item.quantity), 0);
+  const cartTotal = Math.max(0, cartSubtotal - Number(discount));
   const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  // Sync finalTotalInput with cartTotal
+  useEffect(() => {
+    if (Number(finalTotalInput) !== cartTotal) {
+      setFinalTotalInput(cartTotal.toString());
+    }
+  }, [cartTotal]);
 
   const addToCart = (product: Product) => {
     setCart(prev => {
@@ -143,7 +157,7 @@ export default function Sales({ products, sales, customers, services }: SalesPro
     addToCart(serviceAsProduct);
   };
 
-  const updateNegotiatedPrice = (productId: string, price: number) => {
+  const updateNegotiatedPrice = (productId: string, price: number | string) => {
     setCart(prev => prev.map(item => 
       item.product.id === productId ? { ...item, negotiatedPrice: price } : item
     ));
@@ -165,6 +179,15 @@ export default function Sales({ products, sales, customers, services }: SalesPro
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
+  const handleDeleteSale = async (saleId: string) => {
+    try {
+      await deleteDoc(doc(db, 'sales', saleId));
+      setSaleToDelete(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `sales/${saleId}`);
+    }
+  };
+
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     setLoading(true);
@@ -172,18 +195,30 @@ export default function Sales({ products, sales, customers, services }: SalesPro
     setSuccess(false);
 
     try {
+      // Calculate pro-rated discount for each item if there's a global discount
+      const totalBeforeDiscount = cartSubtotal;
+      const discountNum = Number(discount);
+      
       // Process each item in the cart
       for (const item of cart) {
         const isService = item.product.id.startsWith('svc_');
-        const totalPrice = item.negotiatedPrice * item.quantity;
-        const totalProfit = (item.negotiatedPrice - item.product.cost) * item.quantity;
+        const itemSubtotal = Number(item.negotiatedPrice) * item.quantity;
+        
+        // Distribute discount proportionally
+        const itemDiscount = totalBeforeDiscount > 0 
+          ? (itemSubtotal / totalBeforeDiscount) * discountNum 
+          : 0;
+          
+        const totalPrice = Math.max(0, itemSubtotal - itemDiscount);
+        const totalProfit = (Number(item.negotiatedPrice) - item.product.cost) * item.quantity - itemDiscount;
 
         // 1. Create sale record
         await addDoc(collection(db, 'sales'), {
           productId: item.product.id,
           productName: item.product.name,
           quantity: item.quantity,
-          unitPrice: item.negotiatedPrice,
+          unitPrice: Number(item.negotiatedPrice),
+          discount: itemDiscount,
           totalPrice,
           totalProfit,
           timestamp: Timestamp.now(),
@@ -226,15 +261,17 @@ export default function Sales({ products, sales, customers, services }: SalesPro
 
       setCart([]);
       setSelectedCustomer(null);
+      setDiscount(0);
       
       // Store for receipt
       setLastSale({
         items: cart,
         total: cartTotal,
         received: Number(receivedAmount) || cartTotal,
-        change: (Number(receivedAmount) || cartTotal) - cartTotal,
+        change: Math.max(0, (Number(receivedAmount) || cartTotal) - cartTotal),
         customer: selectedCustomer,
-        timestamp: new Date()
+        timestamp: new Date(),
+        discount: Number(discount)
       });
       
       setReceivedAmount('');
@@ -250,6 +287,142 @@ export default function Sales({ products, sales, customers, services }: SalesPro
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePrint = () => {
+    if (!lastSale) return;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      setShowPrintMessage(true);
+      setTimeout(() => setShowPrintMessage(false), 5000);
+      return;
+    }
+
+    const memoHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Cash Memo - ${settings?.shopName || 'Digital Shop'}</title>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap');
+            body { 
+              font-family: 'Courier Prime', monospace; 
+              padding: 40px; 
+              color: #000; 
+              max-width: 400px; 
+              margin: 0 auto;
+              line-height: 1.2;
+            }
+            .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 15px; margin-bottom: 15px; }
+            .logo { width: 220px; height: auto; margin-bottom: 5px; }
+            .shop-info { font-size: 12px; margin: 4px 0; }
+            .memo-title { font-size: 18px; font-weight: 700; margin-top: 15px; text-decoration: underline; }
+            .details { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 15px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+            th { text-align: left; border-bottom: 1px solid #000; font-size: 11px; padding: 8px 0; }
+            td { padding: 8px 0; font-size: 11px; vertical-align: top; }
+            .total-section { border-top: 2px dashed #000; padding-top: 15px; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
+            .grand-total { font-weight: 700; font-size: 18px; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 5px 0; margin: 10px 0; }
+            .footer { text-align: center; margin-top: 40px; font-size: 11px; font-style: italic; }
+            .signatures { display: flex; justify-content: space-between; margin-top: 60px; }
+            .sig-line { width: 140px; border-top: 1px solid #000; text-align: center; font-size: 10px; padding-top: 5px; }
+            @media print {
+              body { padding: 20px; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <img src="https://i.ibb.co.com/cX7qP4n6/Picsart-26-04-10-02-09-25-057.png" alt="Logo" class="logo" referrerPolicy="no-referrer" />
+            ${settings?.shopAddress ? `<p class="shop-info">${settings.shopAddress}</p>` : ''}
+            ${settings?.shopPhone ? `<p class="shop-info">Phone: ${settings.shopPhone}</p>` : ''}
+            ${settings?.shopEmail ? `<p class="shop-info">Email: ${settings.shopEmail}</p>` : ''}
+            <div class="memo-title">CASH MEMO</div>
+          </div>
+
+          <div class="details">
+            <span>Date: ${format(lastSale.timestamp, 'yyyy-MM-dd')}</span>
+            <span>Time: ${formatAppTime(lastSale.timestamp)}</span>
+          </div>
+
+          ${lastSale.customer ? `
+            <div style="font-size: 11px; margin-bottom: 15px; padding: 8px; border: 1px solid #000;">
+              <strong>CUSTOMER:</strong> ${lastSale.customer.name.toUpperCase()}<br>
+              <strong>PHONE:</strong> ${lastSale.customer.phone}
+            </div>
+          ` : ''}
+
+          <table>
+            <thead>
+              <tr>
+                <th>ITEM DESCRIPTION</th>
+                <th style="text-align: center;">QTY</th>
+                <th style="text-align: right;">PRICE</th>
+                <th style="text-align: right;">TOTAL</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${lastSale.items.map(item => `
+                <tr>
+                  <td>${item.product.name.toUpperCase()}</td>
+                  <td style="text-align: center;">${item.quantity}</td>
+                  <td style="text-align: right;">${Number(item.negotiatedPrice).toFixed(2)}</td>
+                  <td style="text-align: right;">${(item.quantity * Number(item.negotiatedPrice)).toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="total-section">
+            <div class="total-row">
+              <span>SUBTOTAL:</span>
+              <span>৳${(lastSale.total + lastSale.discount).toFixed(2)}</span>
+            </div>
+            ${lastSale.discount > 0 ? `
+              <div class="total-row">
+                <span>DISCOUNT:</span>
+                <span>-৳${lastSale.discount.toFixed(2)}</span>
+              </div>
+            ` : ''}
+            <div class="total-row grand-total">
+              <span>NET PAYABLE:</span>
+              <span>৳${lastSale.total.toFixed(2)}</span>
+            </div>
+            <div class="total-row">
+              <span>CASH RECEIVED:</span>
+              <span>৳${lastSale.received.toFixed(2)}</span>
+            </div>
+            <div class="total-row">
+              <span>CHANGE:</span>
+              <span>৳${lastSale.change.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <div class="footer">
+            ${settings?.memoFooter || 'Thank you for your business!'}
+            <p style="margin-top: 10px; font-size: 8px;">Software by StockPilot</p>
+          </div>
+
+          <div class="signatures">
+            <div class="sig-line">Customer Signature</div>
+            <div class="sig-line">Authorized Signature</div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              // window.close(); // Optional: close tab after print
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(memoHtml);
+    printWindow.document.close();
   };
 
   return (
@@ -525,16 +698,16 @@ export default function Sales({ products, sales, customers, services }: SalesPro
                       <input 
                         type="number" 
                         value={item.negotiatedPrice}
-                        onChange={(e) => updateNegotiatedPrice(item.product.id, Number(e.target.value))}
+                        onChange={(e) => updateNegotiatedPrice(item.product.id, e.target.value)}
                         className={cn(
-                          "w-14 bg-transparent border-b text-[10px] font-black focus:border-indigo-500 outline-none p-0 transition-colors",
-                          item.negotiatedPrice !== item.product.price 
-                            ? "text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800" 
-                            : "text-indigo-600 dark:text-indigo-400 border-slate-200 dark:border-slate-700"
+                          "w-20 bg-slate-50 dark:bg-slate-800/50 rounded px-1 py-0.5 text-[10px] font-black focus:ring-1 focus:ring-indigo-500 outline-none transition-all",
+                          Number(item.negotiatedPrice) !== item.product.price 
+                            ? "text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800" 
+                            : "text-indigo-600 dark:text-indigo-400 border border-slate-200 dark:border-slate-700"
                         )}
                         title="Negotiated Price"
                       />
-                      {item.negotiatedPrice !== item.product.price && (
+                      {Number(item.negotiatedPrice) !== item.product.price && (
                         <span className="text-[7px] font-bold text-amber-500 animate-pulse">!</span>
                       )}
                     </div>
@@ -567,8 +740,46 @@ export default function Sales({ products, sales, customers, services }: SalesPro
           <div className="space-y-1">
             <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400">
               <span>Subtotal</span>
-              <span>৳{cartTotal.toFixed(2)}</span>
+              <span>৳{cartSubtotal.toFixed(2)}</span>
             </div>
+            
+            <div className="flex items-center justify-between gap-2 py-0.5">
+              <span className="text-[10px] text-slate-500 dark:text-slate-400">Discount</span>
+              <div className="relative flex-1 max-w-[100px]">
+                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-bold">৳</span>
+                <input
+                  type="number"
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full pl-4 pr-1.5 py-1 text-[10px] font-bold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md outline-none focus:ring-1 focus:ring-indigo-500 text-right"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 py-0.5">
+              <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">Final Total</span>
+              <div className="relative flex-1 max-w-[100px]">
+                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-indigo-400 font-bold">৳</span>
+                <input
+                  type="number"
+                  value={finalTotalInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFinalTotalInput(val);
+                    if (val === '') {
+                      setDiscount(0);
+                    } else {
+                      const newTotal = Number(val);
+                      setDiscount(Math.max(0, cartSubtotal - newTotal));
+                    }
+                  }}
+                  placeholder={cartTotal.toFixed(2)}
+                  className="w-full pl-4 pr-1.5 py-1 text-[10px] font-black bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 rounded-md outline-none focus:ring-1 focus:ring-indigo-500 text-right text-indigo-600 dark:text-indigo-400"
+                />
+              </div>
+            </div>
+
             <div className="flex items-center justify-between gap-2 py-1">
               <span className="text-[10px] text-slate-500 dark:text-slate-400">Received</span>
               <div className="relative flex-1 max-w-[100px]">
@@ -582,6 +793,7 @@ export default function Sales({ products, sales, customers, services }: SalesPro
                 />
               </div>
             </div>
+            
             {Number(receivedAmount) > cartTotal && (
               <div className="flex justify-between text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
                 <span>Change</span>
@@ -589,7 +801,7 @@ export default function Sales({ products, sales, customers, services }: SalesPro
               </div>
             )}
             <div className="pt-1 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
-              <span className="font-bold text-[11px] text-slate-900 dark:text-white">Total</span>
+              <span className="font-bold text-[11px] text-slate-900 dark:text-white">To Pay</span>
               <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">৳{cartTotal.toFixed(2)}</span>
             </div>
           </div>
@@ -644,7 +856,7 @@ export default function Sales({ products, sales, customers, services }: SalesPro
                             <h4 className="font-bold text-slate-900 dark:text-white">{sale.productName}</h4>
                             <div className="flex items-center gap-2">
                               <p className="text-xs text-slate-500 dark:text-slate-400">
-                                {format(sale.timestamp.toDate(), 'MMM dd, yyyy • HH:mm')}
+                                {formatAppDateTime(sale.timestamp.toDate())}
                               </p>
                               {sale.unitPrice !== product?.price && (
                                 <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 px-1.5 rounded">
@@ -654,9 +866,18 @@ export default function Sales({ products, sales, customers, services }: SalesPro
                             </div>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-black text-slate-900 dark:text-white">৳{sale.totalPrice.toFixed(2)}</p>
-                          <p className="text-xs font-bold text-slate-500 dark:text-slate-400">{sale.quantity} units</p>
+                        <div className="flex items-center gap-4">
+                          <button
+                            onClick={() => setSaleToDelete(sale.id)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-all"
+                            title="Delete Sale Record"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                          <div className="text-right">
+                            <p className="font-black text-slate-900 dark:text-white">৳{sale.totalPrice.toFixed(2)}</p>
+                            <p className="text-xs font-bold text-slate-500 dark:text-slate-400">{sale.quantity} units</p>
+                          </div>
                         </div>
                       </div>
                     );
@@ -667,6 +888,44 @@ export default function Sales({ products, sales, customers, services }: SalesPro
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {saleToDelete && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-8 text-center">
+                <div className="w-20 h-20 bg-red-50 dark:bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Trash2 size={40} className="text-red-600" />
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">Delete Sale Record?</h3>
+                <p className="text-slate-500 dark:text-slate-400 mb-8">
+                  This action cannot be undone. This will permanently remove the sale record from your history.
+                </p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setSaleToDelete(null)}
+                    className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSale(saleToDelete)}
+                    className="flex-1 px-6 py-4 rounded-2xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20 transition-all"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Notifications */}
       {error && (
@@ -688,26 +947,34 @@ export default function Sales({ products, sales, customers, services }: SalesPro
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col"
+              className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col print-only"
             >
               <div className="p-6 text-center border-b border-dashed border-slate-200 dark:border-slate-800 relative">
-                <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <div className="print:hidden w-16 h-16 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
                   <CheckCircle2 size={32} />
                 </div>
-                <h3 className="text-xl font-black text-slate-900 dark:text-white">Cash Memo</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Transaction Successful</p>
+                <h2 className="text-2xl font-black text-slate-900 dark:text-white mb-1 uppercase tracking-tight">
+                  {settings?.shopName || 'DIGITAL SHOP'}
+                </h2>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-bold">Cash Memo</p>
+                {settings?.shopAddress && (
+                  <p className="text-[8px] text-slate-400 mt-1 max-w-[200px] mx-auto leading-tight">{settings.shopAddress}</p>
+                )}
+                {settings?.shopPhone && (
+                  <p className="text-[8px] text-slate-400 mt-0.5">Phone: {settings.shopPhone}</p>
+                )}
                 <button 
                   onClick={() => setLastSale(null)}
-                  className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 print:hidden"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto font-mono">
+              <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto font-mono print:max-h-none print:overflow-visible">
                 <div className="flex justify-between text-[10px] text-slate-500">
                   <span>Date: {format(lastSale.timestamp, 'yyyy-MM-dd')}</span>
-                  <span>Time: {format(lastSale.timestamp, 'HH:mm:ss')}</span>
+                  <span>Time: {formatAppTime(lastSale.timestamp)}</span>
                 </div>
 
                 {lastSale.customer && (
@@ -726,7 +993,7 @@ export default function Sales({ products, sales, customers, services }: SalesPro
                         <p className="text-slate-800 dark:text-slate-200 truncate">{item.product.name}</p>
                         <p className="text-[10px] text-slate-500">{item.quantity} x ৳{item.negotiatedPrice}</p>
                       </div>
-                      <span className="font-bold text-slate-900 dark:text-white">৳{(item.quantity * item.negotiatedPrice).toFixed(2)}</span>
+                      <span className="font-bold text-slate-900 dark:text-white">৳{(item.quantity * Number(item.negotiatedPrice)).toFixed(2)}</span>
                     </div>
                   ))}
                 </div>
@@ -745,11 +1012,25 @@ export default function Sales({ products, sales, customers, services }: SalesPro
                     <span>৳{lastSale.change.toFixed(2)}</span>
                   </div>
                 </div>
+
+                <div className="pt-8 text-center space-y-4">
+                  <p className="text-[10px] text-slate-400 italic">
+                    {settings?.memoFooter || 'Thank you for your business!'}
+                  </p>
+                  <div className="flex justify-between pt-8">
+                    <div className="w-24 border-t border-slate-300 dark:border-slate-700 pt-1">
+                      <p className="text-[8px] text-slate-400">Customer Signature</p>
+                    </div>
+                    <div className="w-24 border-t border-slate-300 dark:border-slate-700 pt-1">
+                      <p className="text-[8px] text-slate-400">Authorized Signature</p>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 flex gap-3">
+              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 flex gap-3 print:hidden">
                 <button
-                  onClick={() => window.print()}
+                  onClick={handlePrint}
                   className="flex-1 flex items-center justify-center gap-2 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
                 >
                   <Printer size={16} />
@@ -776,6 +1057,20 @@ export default function Sales({ products, sales, customers, services }: SalesPro
           </div>
         </div>
       )}
+      {/* Print Message Toast */}
+      <AnimatePresence>
+        {showPrintMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200] bg-amber-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-2 font-bold"
+          >
+            <AlertTriangle size={20} />
+            Please allow pop-ups to print the memo.
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

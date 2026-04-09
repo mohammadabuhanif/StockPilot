@@ -3,7 +3,7 @@ import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, onSnapsho
 import { Service, ServiceOrder } from '../types';
 import { Plus, Search, Filter, Clock, CheckCircle2, Truck, AlertCircle, Phone, User, FileText, Printer, MoreVertical, Trash2, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
-import { cn } from '../lib/utils';
+import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function ServiceCenter() {
@@ -16,6 +16,7 @@ export default function ServiceCenter() {
   const [searchTerm, setSearchTerm] = useState('');
   const [orderSortBy, setOrderSortBy] = useState<'newest' | 'oldest' | 'price-high' | 'price-low' | 'customer'>('newest');
   const [catalogSortBy, setCatalogSortBy] = useState<'name' | 'price-high' | 'price-low'>('name');
+  const [deletingOrder, setDeletingOrder] = useState<ServiceOrder | null>(null);
 
   // New Service Form State
   const [newService, setNewService] = useState({
@@ -94,10 +95,21 @@ export default function ServiceCenter() {
     }
   };
 
+  const updateOrderPrice = async (orderId: string, newPrice: number) => {
+    try {
+      await updateDoc(doc(db, 'serviceOrders', orderId), {
+        price: newPrice,
+        updatedAt: Timestamp.now()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'serviceOrders');
+    }
+  };
+
   const deleteOrder = async (orderId: string) => {
-    if (!window.confirm('Delete this order?')) return;
     try {
       await deleteDoc(doc(db, 'serviceOrders', orderId));
+      setDeletingOrder(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'serviceOrders');
     }
@@ -247,7 +259,7 @@ export default function ServiceCenter() {
                       {order.status}
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => deleteOrder(order.id)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg"><Trash2 size={14} /></button>
+                      <button onClick={() => setDeletingOrder(order)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg"><Trash2 size={14} /></button>
                     </div>
                   </div>
 
@@ -256,7 +268,7 @@ export default function ServiceCenter() {
                       <h4 className="font-black text-slate-900 dark:text-white text-lg leading-tight">{order.serviceName}</h4>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
                         <Clock size={12} />
-                        {format(order.createdAt.toDate(), 'MMM dd, hh:mm a')}
+                        {formatAppDateTime(order.createdAt.toDate())}
                       </p>
                     </div>
 
@@ -284,8 +296,15 @@ export default function ServiceCenter() {
                     )}
 
                     <div className="flex items-center justify-between pt-3">
-                      <div className="text-xl font-black text-indigo-600 dark:text-indigo-400">
-                        ৳{order.price}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-bold text-slate-400">৳</span>
+                        <input 
+                          type="number"
+                          value={order.price}
+                          onChange={(e) => updateOrderPrice(order.id, Number(e.target.value))}
+                          className="w-20 bg-slate-50 dark:bg-slate-800/50 rounded px-2 py-1 text-lg font-black text-indigo-600 dark:text-indigo-400 focus:ring-2 focus:ring-indigo-500 outline-none transition-all border border-slate-100 dark:border-slate-800"
+                          title="Negotiated Price"
+                        />
                       </div>
                       <div className="flex gap-1">
                         {order.status === 'pending' && (
@@ -517,6 +536,48 @@ export default function ServiceCenter() {
                   Add Service
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deletingOrder && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeletingOrder(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl overflow-hidden p-8 text-center"
+            >
+              <div className="w-20 h-20 bg-red-50 dark:bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 size={40} className="text-red-600" />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">Delete Order?</h3>
+              <p className="text-slate-500 dark:text-slate-400 mb-8">
+                Are you sure you want to delete the service order for <span className="font-bold text-slate-900 dark:text-white">"{deletingOrder.customerName}"</span>? This action cannot be undone.
+              </p>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setDeletingOrder(null)}
+                  className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => deleteOrder(deletingOrder.id)}
+                  className="flex-1 px-6 py-4 rounded-2xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20 transition-all"
+                >
+                  Delete
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

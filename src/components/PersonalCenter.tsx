@@ -4,7 +4,7 @@ import { Note, Idea, Product, Sale } from '../types';
 import { GoogleGenAI } from "@google/genai";
 import { Send, Plus, Trash2, Edit2, Save, Sparkles, Heart, Flower2, Type, Palette, Maximize2, Minimize2, MessageSquare, BrainCircuit } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
-import { cn } from '../lib/utils';
+import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import CatAssistant from './CatAssistant';
@@ -24,6 +24,7 @@ export default function PersonalCenter({ products, sales }: PersonalCenterProps)
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [isAiTalking, setIsAiTalking] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -103,13 +104,13 @@ export default function PersonalCenter({ products, sales }: PersonalCenterProps)
   };
 
   const handleDeleteNote = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this note?')) return;
     try {
       await deleteDoc(doc(db, 'notes', id));
       if (activeNote?.id === id) {
         setActiveNote(null);
         setIsEditing(false);
       }
+      setNoteToDelete(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'notes');
     }
@@ -440,7 +441,7 @@ export default function PersonalCenter({ products, sales }: PersonalCenterProps)
                               <button onClick={() => setIsEditing(true)} className="p-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl hover:bg-pink-50 dark:hover:bg-pink-900/20 transition-colors">
                                 <Edit2 size={18} />
                               </button>
-                              <button onClick={() => handleDeleteNote(activeNote.id)} className="p-2 bg-slate-100 dark:bg-slate-800 text-red-500 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                              <button onClick={() => setNoteToDelete(activeNote)} className="p-2 bg-slate-100 dark:bg-slate-800 text-red-500 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                                 <Trash2 size={18} />
                               </button>
                             </div>
@@ -500,6 +501,48 @@ export default function PersonalCenter({ products, sales }: PersonalCenterProps)
               </div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+      {/* Note Delete Confirmation */}
+      <AnimatePresence>
+        {noteToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setNoteToDelete(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl overflow-hidden p-8 text-center"
+            >
+              <div className="w-20 h-20 bg-red-50 dark:bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 size={40} className="text-red-600" />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">Delete Thought?</h3>
+              <p className="text-slate-500 dark:text-slate-400 mb-8">
+                Are you sure you want to delete <span className="font-bold text-slate-900 dark:text-white">"{noteToDelete.title}"</span>? This action cannot be undone.
+              </p>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setNoteToDelete(null)}
+                  className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleDeleteNote(noteToDelete.id)}
+                  className="flex-1 px-6 py-4 rounded-2xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20 transition-all"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

@@ -117,6 +117,19 @@
         "lastVisit": { "type": "string", "format": "date-time", "description": "The last visit time." }
       },
       "required": ["name", "phone", "totalSpent", "loyaltyPoints", "createdAt", "lastVisit"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global shop settings and profile information.",
+      "type": "object",
+      "properties": {
+        "shopName": { "type": "string", "description": "The name of the shop." },
+        "shopAddress": { "type": "string", "description": "The address of the shop." },
+        "shopPhone": { "type": "string", "description": "The contact phone number." },
+        "shopEmail": { "type": "string", "description": "The contact email." },
+        "memoFooter": { "type": "string", "description": "A custom message at the bottom of the memo." }
+      },
+      "required": ["shopName"]
     }
   },
   "firestore": {
@@ -151,6 +164,10 @@
     "/customers/{customerId}": {
       "schema": "Customer",
       "description": "Collection of shop customers."
+    },
+    "/settings/global": {
+      "schema": "Settings",
+      "description": "Global shop settings."
     }
   }
 }
