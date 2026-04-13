@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, handleFirestoreError, OperationType } from '../firebase';
 import { Product, Sale, Customer, Service, Settings } from '../types';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Package, AlertCircle, CheckCircle2, History, X, Filter, User, UserPlus, Zap, Barcode, Printer, Receipt, AlertTriangle } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Package, AlertCircle, CheckCircle2, History, X, Filter, User, UserPlus, Zap, Barcode, Printer, Receipt, AlertTriangle, ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { CashDrawerBox } from './CashDrawerBox';
 
 interface SalesProps {
   products: Product[];
@@ -23,6 +24,7 @@ interface CartItem {
 export default function Sales({ products, sales, customers, services, settings }: SalesProps) {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'products' | 'services'>('products');
   const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'price-low' | 'price-high' | 'stock-low' | 'stock-high'>('name-asc');
@@ -30,12 +32,14 @@ export default function Sales({ products, sales, customers, services, settings }
   const [error, setError] = useState<string | null>(null);
   const [showPrintMessage, setShowPrintMessage] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [receivedAmount, setReceivedAmount] = useState<number | string>('');
   const [discount, setDiscount] = useState<number | string>(0);
   const [finalTotalInput, setFinalTotalInput] = useState<string>('');
   const [saleToDelete, setSaleToDelete] = useState<string | null>(null);
+  const [lastAddedItem, setLastAddedItem] = useState<string | null>(null);
   const [lastSale, setLastSale] = useState<{
     items: CartItem[];
     total: number;
@@ -71,7 +75,9 @@ export default function Sales({ products, sales, customers, services, settings }
   // Focus barcode input on mount and periodically to ensure it's always ready
   useEffect(() => {
     const focusInterval = setInterval(() => {
-      if (!showHistory && !lastSale) {
+      const activeElement = document.activeElement;
+      const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+      if (!showHistory && !lastSale && !isInput) {
         barcodeInputRef.current?.focus();
       }
     }, 2000);
@@ -92,12 +98,14 @@ export default function Sales({ products, sales, customers, services, settings }
     }
   };
 
-  // Filter products based on search
+  // Filter products based on search and category
   const filteredProducts = useMemo(() => {
-    let result = products.filter(p => 
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      p.category.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    let result = products.filter(p => {
+      const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                           p.category.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
 
     return result.sort((a, b) => {
       switch (sortBy) {
@@ -112,6 +120,10 @@ export default function Sales({ products, sales, customers, services, settings }
     });
   }, [products, searchQuery, sortBy]);
 
+  const categories = useMemo(() => {
+    const cats = new Set(products.map(p => p.category));
+    return ['All', ...Array.from(cats).sort()];
+  }, [products]);
   const cartSubtotal = cart.reduce((sum, item) => sum + (Number(item.negotiatedPrice) * item.quantity), 0);
   const cartTotal = Math.max(0, cartSubtotal - Number(discount));
   const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -124,6 +136,8 @@ export default function Sales({ products, sales, customers, services, settings }
   }, [cartTotal]);
 
   const addToCart = (product: Product) => {
+    setLastAddedItem(product.name);
+    setTimeout(() => setLastAddedItem(null), 2000);
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
@@ -292,12 +306,14 @@ export default function Sales({ products, sales, customers, services, settings }
   const handlePrint = () => {
     if (!lastSale) return;
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      setShowPrintMessage(true);
-      setTimeout(() => setShowPrintMessage(false), 5000);
-      return;
-    }
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
 
     const memoHtml = `
       <!DOCTYPE html>
@@ -410,23 +426,40 @@ export default function Sales({ products, sales, customers, services, settings }
             <div class="sig-line">Customer Signature</div>
             <div class="sig-line">Authorized Signature</div>
           </div>
-
-          <script>
-            window.onload = function() {
-              window.print();
-              // window.close(); // Optional: close tab after print
-            };
-          </script>
         </body>
       </html>
     `;
 
-    printWindow.document.write(memoHtml);
-    printWindow.document.close();
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(memoHtml);
+      doc.close();
+
+      iframe.contentWindow?.focus();
+      
+      const removeIframe = () => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      };
+
+      if (iframe.contentWindow) {
+        iframe.contentWindow.onafterprint = removeIframe;
+      }
+
+      setTimeout(() => {
+        iframe.contentWindow?.print();
+        // Fallback removal just in case afterprint doesn't fire
+        setTimeout(removeIframe, 60000);
+      }, 500);
+    }
   };
 
   return (
-    <div className="h-[calc(100vh-7rem)] flex flex-col lg:flex-row gap-2 -m-1 p-1 relative">
+    <div className="h-[calc(100vh-12rem)] lg:h-[calc(100vh-7rem)] flex flex-col gap-4 -m-1 p-1 relative overflow-y-auto">
+      <CashDrawerBox registerId="sales" registerName="Sales POS Register" />
+      <div className="flex flex-col lg:flex-row gap-2 flex-1 min-h-0 relative">
       
       {/* Left Side: Product Grid */}
       <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -438,50 +471,71 @@ export default function Sales({ products, sales, customers, services, settings }
             value={barcodeInput}
             onChange={(e) => setBarcodeInput(e.target.value)}
             onBlur={(e) => {
-              // Prevent losing focus unless a modal is open
-              if (!showHistory && !lastSale) {
-                setTimeout(() => e.target.focus(), 10);
+              // Prevent losing focus unless a modal is open or another input is focused
+              const relatedTarget = e.relatedTarget as HTMLElement;
+              const isInput = relatedTarget?.tagName === 'INPUT' || relatedTarget?.tagName === 'TEXTAREA';
+              if (!showHistory && !lastSale && !isInput) {
+                setTimeout(() => barcodeInputRef.current?.focus(), 10);
               }
             }}
           />
         </form>
 
         {/* Search Header */}
-        <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex flex-col gap-2">
+        <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex flex-col gap-2 bg-slate-50/30 dark:bg-slate-800/20">
           <div className="flex items-center gap-2">
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0">
+            <div className="flex bg-slate-200/50 dark:bg-slate-800 p-1 rounded-xl shrink-0">
               <button
                 onClick={() => setViewMode('products')}
                 className={cn(
-                  "px-3 py-1 text-[10px] font-bold rounded-lg transition-all",
+                  "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all",
                   viewMode === 'products' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500"
                 )}
               >
-                Products
+                Stock
               </button>
               <button
                 onClick={() => setViewMode('services')}
                 className={cn(
-                  "px-3 py-1 text-[10px] font-bold rounded-lg transition-all",
+                  "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all",
                   viewMode === 'services' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500"
                 )}
               >
-                Services
+                Svcs
               </button>
             </div>
             <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={14} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={14} />
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder={viewMode === 'products' ? "Search products... (⌘S)" : "Search services..."}
+                placeholder={viewMode === 'products' ? "Search... (⌘S)" : "Search..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1 text-xs bg-slate-50 dark:bg-slate-800/50 border-none rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700 dark:text-slate-200 font-medium placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                className="w-full pl-9 pr-3 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700 dark:text-slate-200 font-medium placeholder:text-slate-400 dark:placeholder:text-slate-500"
                 autoFocus
               />
             </div>
           </div>
+
+          {viewMode === 'products' && (
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-[10px] font-bold whitespace-nowrap border transition-all",
+                    selectedCategory === cat 
+                      ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-100 dark:shadow-none" 
+                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-indigo-300"
+                  )}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -489,7 +543,7 @@ export default function Sales({ products, sales, customers, services, settings }
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as any)}
-                  className="appearance-none pl-7 pr-6 py-1 text-[10px] bg-slate-50 dark:bg-slate-800/50 border-none rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700 dark:text-slate-200 font-bold cursor-pointer transition-all"
+                  className="appearance-none pl-7 pr-8 py-1.5 text-[10px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700 dark:text-slate-200 font-bold cursor-pointer transition-all"
                 >
                   <option value="name-asc">A-Z</option>
                   <option value="name-desc">Z-A</option>
@@ -502,21 +556,21 @@ export default function Sales({ products, sales, customers, services, settings }
                     </>
                   )}
                 </select>
-                <Filter className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+                <Filter className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
               </div>
 
-              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold rounded-lg border border-indigo-100 dark:border-indigo-500/20">
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-black uppercase tracking-wider rounded-lg border border-emerald-100 dark:border-emerald-500/20">
                 <Barcode size={12} />
-                <span>Scanner Active</span>
+                <span>Scanner</span>
               </div>
             </div>
 
             <button 
               onClick={() => setShowHistory(true)}
-              className="flex items-center gap-1 px-2 py-1 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-bold rounded-lg transition-colors border border-slate-100 dark:border-slate-700"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all border border-slate-200 dark:border-slate-700"
             >
               <History size={14} />
-              <span className="hidden sm:inline">History</span>
+              <span>History</span>
             </button>
           </div>
         </div>
@@ -536,37 +590,48 @@ export default function Sales({ products, sales, customers, services, settings }
                     onClick={() => addToCart(product)}
                     disabled={isOutOfStock}
                     className={cn(
-                      "flex flex-col text-left bg-white dark:bg-slate-900 border rounded-xl p-1.5 transition-all duration-200 group",
+                      "flex flex-col text-left bg-white dark:bg-slate-900 border rounded-2xl p-2 transition-all duration-300 group relative",
                       isOutOfStock 
                         ? "opacity-50 cursor-not-allowed border-slate-200 dark:border-slate-800" 
-                        : "border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500/50 hover:shadow-sm hover:-translate-y-0.5 cursor-pointer",
+                        : "border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500/50 hover:shadow-xl hover:shadow-indigo-100 dark:hover:shadow-none hover:-translate-y-1 cursor-pointer",
                       cartItem && "ring-2 ring-indigo-500 border-transparent dark:border-transparent"
                     )}
                   >
-                    <div className="w-full aspect-square rounded-lg bg-slate-50 dark:bg-slate-800 mb-1 overflow-hidden flex items-center justify-center relative">
+                    <div className="w-full aspect-square rounded-xl bg-slate-50 dark:bg-slate-800 mb-2 overflow-hidden flex items-center justify-center relative">
                       {product.imageUrl ? (
-                        <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
                       ) : (
-                        <Package className="text-slate-300 dark:text-slate-600" size={20} />
+                        <Package className="text-slate-300 dark:text-slate-600" size={24} />
                       )}
                       {cartItem && (
-                        <div className="absolute top-1 right-1 bg-indigo-600 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-md">
+                        <div className="absolute top-1.5 right-1.5 bg-indigo-600 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-lg animate-in zoom-in duration-300">
                           {cartItem.quantity}
+                        </div>
+                      )}
+                      {isOutOfStock && (
+                        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center">
+                          <span className="bg-white/90 dark:bg-slate-900/90 px-2 py-1 rounded-lg text-[8px] font-black text-red-600 uppercase tracking-widest">Out of Stock</span>
                         </div>
                       )}
                     </div>
                     <div className="flex-1 w-full min-w-0">
-                      <h4 className="font-bold text-slate-900 dark:text-white line-clamp-1 text-[10px] mb-0.5">{product.name}</h4>
-                      <p className="text-[8px] text-slate-500 dark:text-slate-400 truncate">{product.category}</p>
+                      <h4 className="font-black text-slate-900 dark:text-white line-clamp-2 text-[10px] leading-tight mb-1 group-hover:text-indigo-600 transition-colors">{product.name}</h4>
+                      <div className="flex items-center gap-1 mb-2">
+                        <span className="text-[8px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider truncate">{product.category}</span>
+                      </div>
                     </div>
-                    <div className="mt-1 flex items-end justify-between w-full">
-                      <span className="font-black text-[11px] text-indigo-600 dark:text-indigo-400">৳{product.price}</span>
-                      <span className={cn(
-                        "text-[8px] font-bold px-1 py-0.5 rounded",
-                        isOutOfStock ? "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                    <div className="mt-auto flex items-center justify-between w-full">
+                      <div className="flex flex-col">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Price</span>
+                        <span className="font-black text-xs text-indigo-600 dark:text-indigo-400">৳{product.price}</span>
+                      </div>
+                      <div className={cn(
+                        "px-2 py-1 rounded-lg text-[9px] font-black flex flex-col items-center leading-none",
+                        remainingStock < 5 ? "bg-amber-50 dark:bg-amber-500/10 text-amber-600" : "bg-slate-100 dark:bg-slate-800 text-slate-500"
                       )}>
+                        <span className="text-[7px] uppercase opacity-60 mb-0.5">Stock</span>
                         {remainingStock}
-                      </span>
+                      </div>
                     </div>
                   </button>
                 );
@@ -616,16 +681,49 @@ export default function Sales({ products, sales, customers, services, settings }
         </div>
       </div>
 
-      {/* Right Side: Cart / POS */}
-      <div className="w-full lg:w-72 xl:w-80 flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden flex-shrink-0">
-        <div className="p-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
-          <h3 className="font-bold text-xs text-slate-900 dark:text-white flex items-center gap-1.5">
+      {/* Right Side: Cart / POS (Desktop: Sidebar, Mobile: Sheet) */}
+      <div className={cn(
+        "bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col min-h-0 transition-all duration-300",
+        "w-full lg:w-72 xl:w-80 flex-shrink-0",
+        isMobileCartOpen 
+          ? "fixed inset-0 z-50 lg:inset-auto lg:z-0 rounded-none lg:rounded-xl" 
+          : "hidden lg:flex"
+      )}>
+        {/* Mobile Cart Header */}
+        <div className="lg:hidden p-4 bg-indigo-600 text-white flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setIsMobileCartOpen(false)} className="p-2 hover:bg-white/20 rounded-xl transition-colors">
+              <ChevronDown size={24} />
+            </button>
+            <div>
+              <h3 className="font-black uppercase tracking-wider text-sm">Your Order</h3>
+              <p className="text-[10px] opacity-80 font-bold">{cartItemsCount} items selected</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => {
+              if (window.confirm('Clear all items from cart?')) {
+                setCart([]);
+                setIsMobileCartOpen(false);
+              }
+            }}
+            className="p-2 hover:bg-red-500/20 rounded-xl transition-colors text-white/80 hover:text-white"
+          >
+            <Trash2 size={20} />
+          </button>
+        </div>
+
+        <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between lg:flex hidden">
+          <h3 className="font-black text-[10px] text-slate-900 dark:text-white uppercase tracking-[0.2em] flex items-center gap-2">
             <ShoppingCart className="text-indigo-600 dark:text-indigo-400" size={14} />
-            Order
+            Current Order
           </h3>
-          <span className="bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 text-[9px] font-bold px-1.5 py-0.5 rounded-md">
-            {cartItemsCount} Items
-          </span>
+          <button 
+            onClick={() => setCart([])}
+            className="text-[9px] font-black text-slate-400 hover:text-red-500 uppercase tracking-widest transition-colors"
+          >
+            Clear
+          </button>
         </div>
 
         {/* Cart Items */}
@@ -782,15 +880,28 @@ export default function Sales({ products, sales, customers, services, settings }
 
             <div className="flex items-center justify-between gap-2 py-1">
               <span className="text-[10px] text-slate-500 dark:text-slate-400">Received</span>
-              <div className="relative flex-1 max-w-[100px]">
-                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-bold">৳</span>
-                <input
-                  type="number"
-                  value={receivedAmount}
-                  onChange={(e) => setReceivedAmount(e.target.value)}
-                  placeholder={cartTotal.toString()}
-                  className="w-full pl-4 pr-1.5 py-1 text-[10px] font-bold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md outline-none focus:ring-1 focus:ring-indigo-500 text-right"
-                />
+              <div className="flex flex-col items-end gap-1.5 flex-1 max-w-[140px]">
+                <div className="relative w-full">
+                  <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-bold">৳</span>
+                  <input
+                    type="number"
+                    value={receivedAmount}
+                    onChange={(e) => setReceivedAmount(e.target.value)}
+                    placeholder={cartTotal.toString()}
+                    className="w-full pl-4 pr-1.5 py-1.5 text-[10px] font-bold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md outline-none focus:ring-1 focus:ring-indigo-500 text-right"
+                  />
+                </div>
+                <div className="flex gap-1 overflow-x-auto no-scrollbar w-full justify-end">
+                  {[50, 100, 500, 1000].map(amt => (
+                    <button
+                      key={amt}
+                      onClick={() => setReceivedAmount(amt.toString())}
+                      className="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 text-[8px] font-black rounded hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors"
+                    >
+                      +{amt}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
             
@@ -821,6 +932,41 @@ export default function Sales({ products, sales, customers, services, settings }
           </button>
         </div>
       </div>
+
+      {/* Mobile Floating Cart Button */}
+      {!isMobileCartOpen && cart.length > 0 && (
+        <div className="lg:hidden fixed bottom-20 right-4 z-40 flex flex-col items-end gap-3">
+          <AnimatePresence>
+            {lastAddedItem && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg flex items-center gap-2"
+              >
+                <CheckCircle2 size={14} />
+                Added {lastAddedItem}
+              </motion.div>
+            )}
+          </AnimatePresence>
+          
+          <button
+            onClick={() => setIsMobileCartOpen(true)}
+            className="bg-indigo-600 text-white p-4 rounded-2xl shadow-2xl shadow-indigo-200 dark:shadow-none flex items-center gap-3 animate-in zoom-in duration-300 active:scale-95"
+          >
+            <div className="relative">
+              <ShoppingCart size={24} />
+              <span className="absolute -top-2 -right-2 bg-white text-indigo-600 text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-sm">
+                {cartItemsCount}
+              </span>
+            </div>
+            <div className="text-left">
+              <p className="text-[10px] font-bold opacity-80 uppercase tracking-widest leading-none mb-1">View Cart</p>
+              <p className="text-sm font-black leading-none">৳{cartTotal.toFixed(2)}</p>
+            </div>
+          </button>
+        </div>
+      )}
 
       {/* History Modal */}
       {showHistory && (
@@ -1071,6 +1217,7 @@ export default function Sales({ products, sales, customers, services, settings }
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
     </div>
   );
 }

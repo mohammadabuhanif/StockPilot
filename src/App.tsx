@@ -9,9 +9,9 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { auth, signInWithPopup, googleProvider, signOut, onSnapshot, collection, db, query, orderBy, limit, handleFirestoreError, OperationType, getDocs, addDoc, doc } from './firebase';
+import { auth, signInWithPopup, googleProvider, signOut, onSnapshot, collection, db, query, orderBy, limit, handleFirestoreError, OperationType, getDocs, getDoc, setDoc, addDoc, doc, serverTimestamp, where } from './firebase';
 import { User } from 'firebase/auth';
-import { LayoutDashboard, Package, ShoppingCart, LogOut, AlertTriangle, TrendingUp, DollarSign, PackagePlus, X, Store, Menu, Moon, Sun, Heart, Zap, CloudCheck, Users, Receipt } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, LogOut, AlertTriangle, TrendingUp, DollarSign, PackagePlus, X, Store, Menu, Moon, Sun, Heart, Zap, CloudCheck, Users, Receipt, Wrench } from 'lucide-react';
 import { cn } from './lib/utils';
 import Dashboard from './components/Dashboard';
 import Inventory from './components/Inventory';
@@ -22,17 +22,22 @@ import Expenses from './components/Expenses';
 import Customers from './components/Customers';
 import Storefront from './components/Storefront';
 import Settings from './components/Settings';
+import FixerSpace from './components/FixerSpace';
+import PinLock from './components/PinLock';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Logo } from './components/Logo';
 import { HeartZap } from './components/HeartZap';
-import { Product, Sale, ServiceOrder, Expense, Customer, Service, Settings as SettingsType } from './types';
+import { Product, Sale, ServiceOrder, Expense, Customer, Service, Settings as SettingsType, UserRole, AppUser, RepairJob } from './types';
 import gsap from 'gsap';
 import { motion, AnimatePresence } from 'motion/react';
 
-type Tab = 'dashboard' | 'inventory' | 'sales' | 'services' | 'expenses' | 'customers' | 'personal' | 'settings';
+type Tab = 'dashboard' | 'inventory' | 'sales' | 'services' | 'expenses' | 'customers' | 'personal' | 'settings' | 'fixer';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [appUser, setAppUser] = useState<AppUser | null>(null);
+  const [userRole, setUserRole] = useState<UserRole>('staff');
+  const [isLocked, setIsLocked] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -48,6 +53,7 @@ export default function App() {
   const [services, setServices] = useState<Service[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [repairJobs, setRepairJobs] = useState<RepairJob[]>([]);
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [loading, setLoading] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -75,11 +81,83 @@ export default function App() {
     setIsMobileMenuOpen(false);
   }, [activeTab, isShopRoute]);
 
+  // Inactivity Timer
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    if (!user || isShopRoute || isLocked) return;
+
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (!isLocked) {
+          setIsLocked(true);
+        }
+      }, 60000); // 1 minute
+    };
+
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    events.forEach(event => document.addEventListener(event, resetTimer));
+
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(event => document.removeEventListener(event, resetTimer));
+    };
+  }, [user, isShopRoute, isLocked]);
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
       setUser(user);
       if (user) {
         console.log("Logged in as:", user.email);
+        
+        // Fetch or create user record to get role
+        const userDocRef = doc(db, 'users', user.uid);
+        
+        try {
+          // First try to get the document by ID (most efficient and secure)
+          const userDocSnap = await getDoc(userDocRef);
+          
+          if (!userDocSnap.exists()) {
+            // New user, default role is staff (or admin if it's the owner)
+            const role: UserRole = user.email === "abuhanifindiabased@gmail.com" ? 'admin' : 'staff';
+            // Use setDoc with the uid as the document ID for better security rules matching
+            const newUserData = {
+              uid: user.uid,
+              email: user.email,
+              displayName: user.displayName || 'User',
+              role: role,
+              createdAt: serverTimestamp()
+            };
+            await setDoc(userDocRef, newUserData);
+            setUserRole(role);
+            setAppUser({ ...newUserData, id: user.uid, createdAt: undefined } as any);
+            setIsLocked(true); // Lock to set up PIN
+          } else {
+            const userData = userDocSnap.data() as AppUser;
+            setUserRole(userData.role);
+            setAppUser({ ...userData, id: user.uid });
+            setIsLocked(true); // Lock on login
+            if (userData.role === 'fixer') setActiveTab('fixer');
+          }
+        } catch (err) {
+          console.error("Error fetching user role:", err);
+          // Fallback to staff if fetch fails
+          setUserRole('staff');
+          setAppUser({
+            id: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || 'User',
+            role: 'staff'
+          });
+          setIsLocked(true);
+        }
+      } else {
+        setAppUser(null);
+        setIsLocked(false);
+        setUserRole('staff');
       }
       setLoading(false);
     });
@@ -89,86 +167,92 @@ export default function App() {
   useEffect(() => {
     if (!user || isShopRoute) return; // Don't fetch all data if on public shop route
 
-    // Pre-populate services if empty
-    const checkServices = async () => {
-      const servicesSnap = await getDocs(collection(db, 'services'));
-      if (servicesSnap.empty) {
-        const defaultServices = [
-          { name: 'Photocopy (B&W)', category: 'printing', basePrice: 5, description: 'Standard A4 black and white photocopy.' },
-          { name: 'Color Print', category: 'printing', basePrice: 20, description: 'High quality color printing.' },
-          { name: 'Passport Size Photo (4 copies)', category: 'printing', basePrice: 100, description: 'Standard passport size photo print.' },
-          { name: 'Stamp Size Photo (8 copies)', category: 'printing', basePrice: 80, description: 'Small stamp size photo print.' },
-          { name: 'Passport Appointment', category: 'document', basePrice: 500, description: 'Online application and appointment booking.' },
-          { name: 'Name Change Application', category: 'document', basePrice: 1500, description: 'Legal document preparation for name change.' },
-          { name: 'Tax Return Filing', category: 'document', basePrice: 1000, description: 'Annual income tax return submission.' }
-        ];
-        for (const s of defaultServices) {
-          await addDoc(collection(db, 'services'), s);
+    const unsubscribers: (() => void)[] = [];
+
+    // Admin-only data
+    if (userRole === 'admin') {
+      // Pre-populate services if empty
+      const checkServices = async () => {
+        const servicesSnap = await getDocs(collection(db, 'services'));
+        if (servicesSnap.empty) {
+          const defaultServices = [
+            { name: 'Photocopy (B&W)', category: 'printing', basePrice: 5, description: 'Standard A4 black and white photocopy.' },
+            { name: 'Color Print', category: 'printing', basePrice: 20, description: 'High quality color printing.' },
+            { name: 'Passport Size Photo (4 copies)', category: 'printing', basePrice: 100, description: 'Standard passport size photo print.' },
+            { name: 'Stamp Size Photo (8 copies)', category: 'printing', basePrice: 80, description: 'Small stamp size photo print.' },
+            { name: 'Passport Appointment', category: 'document', basePrice: 500, description: 'Online application and appointment booking.' },
+            { name: 'Name Change Application', category: 'document', basePrice: 1500, description: 'Legal document preparation for name change.' },
+            { name: 'Tax Return Filing', category: 'document', basePrice: 1000, description: 'Annual income tax return submission.' }
+          ];
+          for (const s of defaultServices) {
+            await addDoc(collection(db, 'services'), s);
+          }
         }
-      }
-    };
-    checkServices();
+      };
+      checkServices();
 
-    const productsUnsubscribe = onSnapshot(collection(db, 'products'), (snapshot) => {
-      const productsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      setProducts(productsData);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'products');
-    });
+      unsubscribers.push(onSnapshot(collection(db, 'products'), (snapshot) => {
+        const productsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+        setProducts(productsData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'products');
+      }));
 
-    const salesUnsubscribe = onSnapshot(query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(100)), (snapshot) => {
-      const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
-      setSales(salesData);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'sales');
-    });
+      unsubscribers.push(onSnapshot(query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(100)), (snapshot) => {
+        const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
+        setSales(salesData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'sales');
+      }));
 
-    const ordersUnsubscribe = onSnapshot(query(collection(db, 'serviceOrders'), orderBy('createdAt', 'desc'), limit(50)), (snapshot) => {
-      const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceOrder));
-      setServiceOrders(ordersData);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'serviceOrders');
-    });
+      unsubscribers.push(onSnapshot(query(collection(db, 'serviceOrders'), orderBy('createdAt', 'desc'), limit(50)), (snapshot) => {
+        const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceOrder));
+        setServiceOrders(ordersData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'serviceOrders');
+      }));
 
-    const servicesUnsubscribe = onSnapshot(collection(db, 'services'), (snapshot) => {
-      const servicesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
-      setServices(servicesData);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'services');
-    });
+      unsubscribers.push(onSnapshot(collection(db, 'services'), (snapshot) => {
+        const servicesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Service));
+        setServices(servicesData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'services');
+      }));
 
-    const expensesUnsubscribe = onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(100)), (snapshot) => {
-      const expensesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense));
-      setExpenses(expensesData);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'expenses');
-    });
+      unsubscribers.push(onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(100)), (snapshot) => {
+        const expensesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense));
+        setExpenses(expensesData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'expenses');
+      }));
 
-    const customersUnsubscribe = onSnapshot(query(collection(db, 'customers'), orderBy('totalSpent', 'desc'), limit(100)), (snapshot) => {
-      const customersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
-      setCustomers(customersData);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'customers');
-    });
+      unsubscribers.push(onSnapshot(query(collection(db, 'customers'), orderBy('totalSpent', 'desc'), limit(100)), (snapshot) => {
+        const customersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+        setCustomers(customersData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'customers');
+      }));
 
-    const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
-      if (docSnap.exists()) {
-        setSettings(docSnap.data() as SettingsType);
-      }
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'settings/global');
-    });
+      unsubscribers.push(onSnapshot(query(collection(db, 'repairJobs'), orderBy('createdAt', 'desc'), limit(100)), (snapshot) => {
+        const jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RepairJob));
+        setRepairJobs(jobsData);
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'repairJobs');
+      }));
+
+      unsubscribers.push(onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
+        if (docSnap.exists()) {
+          setSettings(docSnap.data() as SettingsType);
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'settings/global');
+      }));
+    }
 
     return () => {
-      productsUnsubscribe();
-      salesUnsubscribe();
-      ordersUnsubscribe();
-      servicesUnsubscribe();
-      expensesUnsubscribe();
-      customersUnsubscribe();
-      settingsUnsubscribe();
+      unsubscribers.forEach(unsub => unsub());
     };
-  }, [user, isShopRoute]);
+  }, [user, isShopRoute, userRole]);
 
   if (isShopRoute) {
     return <Storefront />;
@@ -232,7 +316,18 @@ export default function App() {
   const lowStockProducts = products.filter(p => p.stock <= p.minStock);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col lg:flex-row transition-colors duration-200">
+    <ErrorBoundary>
+      <AnimatePresence mode="wait">
+        {isLocked && appUser && !isShopRoute && (
+          <PinLock 
+            user={appUser} 
+            onUnlock={() => setIsLocked(false)} 
+            onPinSet={(pin) => setAppUser(prev => prev ? { ...prev, pin } : null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col lg:flex-row transition-colors duration-200">
       
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex w-48 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex-col h-screen sticky top-0">
@@ -250,55 +345,72 @@ export default function App() {
         </div>
 
         <nav className="flex-1 px-3 space-y-1 mt-2 lg:mt-0">
-          <NavItem
-            icon={<LayoutDashboard size={20} />}
-            label="Dashboard"
-            active={activeTab === 'dashboard'}
-            onClick={() => setActiveTab('dashboard')}
-          />
-          <NavItem
-            icon={<Package size={20} />}
-            label="Inventory"
-            active={activeTab === 'inventory'}
-            onClick={() => setActiveTab('inventory')}
-            badge={lowStockProducts.length > 0 ? lowStockProducts.length : undefined}
-          />
-          <NavItem
-            icon={<ShoppingCart size={20} />}
-            label="Sales (POS)"
-            active={activeTab === 'sales'}
-            onClick={() => setActiveTab('sales')}
-          />
-          <NavItem
-            icon={<Zap size={20} />}
-            label="Service Center"
-            active={activeTab === 'services'}
-            onClick={() => setActiveTab('services')}
-          />
-          <NavItem
-            icon={<Receipt size={20} />}
-            label="Expenses"
-            active={activeTab === 'expenses'}
-            onClick={() => setActiveTab('expenses')}
-          />
-          <NavItem
-            icon={<Users size={20} />}
-            label="Customers"
-            active={activeTab === 'customers'}
-            onClick={() => setActiveTab('customers')}
-          />
+          {userRole === 'admin' && (
+            <>
+              <NavItem
+                icon={<LayoutDashboard size={20} />}
+                label="Dashboard"
+                active={activeTab === 'dashboard'}
+                onClick={() => setActiveTab('dashboard')}
+              />
+              <NavItem
+                icon={<Package size={20} />}
+                label="Inventory"
+                active={activeTab === 'inventory'}
+                onClick={() => setActiveTab('inventory')}
+                badge={lowStockProducts.length > 0 ? lowStockProducts.length : undefined}
+              />
+              <NavItem
+                icon={<ShoppingCart size={20} />}
+                label="Sales (POS)"
+                active={activeTab === 'sales'}
+                onClick={() => setActiveTab('sales')}
+              />
+              <NavItem
+                icon={<Zap size={20} />}
+                label="Service Center"
+                active={activeTab === 'services'}
+                onClick={() => setActiveTab('services')}
+              />
+              <NavItem
+                icon={<Receipt size={20} />}
+                label="Expenses"
+                active={activeTab === 'expenses'}
+                onClick={() => setActiveTab('expenses')}
+              />
+              <NavItem
+                icon={<Users size={20} />}
+                label="Customers"
+                active={activeTab === 'customers'}
+                onClick={() => setActiveTab('customers')}
+              />
+            </>
+          )}
+
+          {(userRole === 'admin' || userRole === 'fixer') && (
+            <NavItem
+              icon={<Wrench size={20} />}
+              label="Fixer Space"
+              active={activeTab === 'fixer'}
+              onClick={() => setActiveTab('fixer')}
+            />
+          )}
+
           <NavItem
             icon={<Heart size={20} />}
             label="Personal Center"
             active={activeTab === 'personal'}
             onClick={() => setActiveTab('personal')}
           />
-          <NavItem
-            icon={<LayoutDashboard size={20} />}
-            label="Settings"
-            active={activeTab === 'settings'}
-            onClick={() => setActiveTab('settings')}
-          />
+          
+          {userRole === 'admin' && (
+            <NavItem
+              icon={<LayoutDashboard size={20} />}
+              label="Settings"
+              active={activeTab === 'settings'}
+              onClick={() => setActiveTab('settings')}
+            />
+          )}
           <div className="pt-4 pb-2">
             <p className="px-4 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Public</p>
           </div>
@@ -379,14 +491,15 @@ export default function App() {
 
           <div className={cn(activeTab !== 'personal' && "space-y-4")} ref={contentRef}>
             <ErrorBoundary>
-              {activeTab === 'dashboard' && <Dashboard products={products} sales={sales} serviceOrders={serviceOrders} expenses={expenses} customers={customers} />}
-              {activeTab === 'inventory' && <Inventory products={products} />}
-              {activeTab === 'sales' && <Sales products={products} sales={sales} customers={customers} services={services} settings={settings} />}
-              {activeTab === 'services' && <ServiceCenter />}
-              {activeTab === 'expenses' && <Expenses />}
-              {activeTab === 'customers' && <Customers />}
-              {activeTab === 'personal' && <PersonalCenter products={products} sales={sales} />}
-              {activeTab === 'settings' && <Settings />}
+              {activeTab === 'dashboard' && userRole === 'admin' && <Dashboard products={products} sales={sales} serviceOrders={serviceOrders} expenses={expenses} customers={customers} repairJobs={repairJobs} />}
+              {activeTab === 'inventory' && userRole === 'admin' && <Inventory products={products} settings={settings} />}
+              {activeTab === 'sales' && userRole === 'admin' && <Sales products={products} sales={sales} customers={customers} services={services} settings={settings} />}
+              {activeTab === 'services' && userRole === 'admin' && <ServiceCenter />}
+              {activeTab === 'expenses' && userRole === 'admin' && <Expenses />}
+              {activeTab === 'customers' && userRole === 'admin' && <Customers />}
+              {activeTab === 'personal' && <PersonalCenter products={products} sales={sales} appUser={appUser} />}
+              {activeTab === 'settings' && userRole === 'admin' && <Settings />}
+              {activeTab === 'fixer' && (userRole === 'admin' || userRole === 'fixer') && <FixerSpace userRole={userRole} />}
             </ErrorBoundary>
           </div>
         </div>
@@ -400,11 +513,20 @@ export default function App() {
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 flex justify-around items-center p-1.5 pb-safe z-40 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)]">
-        <MobileNavItem icon={<LayoutDashboard size={20} />} label="Home" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <MobileNavItem icon={<Package size={20} />} label="Stock" active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} badge={lowStockProducts.length > 0 ? lowStockProducts.length : undefined} />
-        <MobileNavItem icon={<ShoppingCart size={20} />} label="POS" active={activeTab === 'sales'} onClick={() => setActiveTab('sales')} />
-        <MobileNavItem icon={<Zap size={20} />} label="Services" active={activeTab === 'services'} onClick={() => setActiveTab('services')} />
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 flex justify-around items-center p-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] z-40 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)]">
+        {userRole === 'admin' ? (
+          <>
+            <MobileNavItem icon={<LayoutDashboard size={20} />} label="Home" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+            <MobileNavItem icon={<Package size={20} />} label="Stock" active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} badge={lowStockProducts.length > 0 ? lowStockProducts.length : undefined} />
+            <MobileNavItem icon={<ShoppingCart size={20} />} label="POS" active={activeTab === 'sales'} onClick={() => setActiveTab('sales')} />
+            <MobileNavItem icon={<Zap size={20} />} label="Services" active={activeTab === 'services'} onClick={() => setActiveTab('services')} />
+          </>
+        ) : (
+          <>
+            {userRole === 'fixer' && <MobileNavItem icon={<Wrench size={20} />} label="Fixer" active={activeTab === 'fixer'} onClick={() => setActiveTab('fixer')} />}
+            <MobileNavItem icon={<Heart size={20} />} label="Personal" active={activeTab === 'personal'} onClick={() => setActiveTab('personal')} />
+          </>
+        )}
         <MobileNavItem icon={<Menu size={20} />} label="More" active={isMobileMenuOpen} onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
       </nav>
 
@@ -412,7 +534,7 @@ export default function App() {
       {isMobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
-          <div className="bg-white dark:bg-slate-900 w-full rounded-t-[2.5rem] p-6 pb-12 relative z-50 animate-in slide-in-from-bottom-full duration-300 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 w-full rounded-t-[2.5rem] p-6 pb-[calc(3rem+env(safe-area-inset-bottom))] relative z-50 animate-in slide-in-from-bottom-full duration-300 shadow-2xl">
             <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full mx-auto mb-6" />
             
             <div className="flex items-center justify-between mb-6">
@@ -423,10 +545,19 @@ export default function App() {
             </div>
             
             <div className="grid grid-cols-3 gap-3 mb-8">
-              <MenuButton icon={<Receipt size={22} />} label="Expenses" active={activeTab === 'expenses'} onClick={() => { setActiveTab('expenses'); setIsMobileMenuOpen(false); }} color="red" />
-              <MenuButton icon={<Users size={22} />} label="Customers" active={activeTab === 'customers'} onClick={() => { setActiveTab('customers'); setIsMobileMenuOpen(false); }} color="blue" />
+              {userRole === 'admin' && (
+                <>
+                  <MenuButton icon={<Receipt size={22} />} label="Expenses" active={activeTab === 'expenses'} onClick={() => { setActiveTab('expenses'); setIsMobileMenuOpen(false); }} color="red" />
+                  <MenuButton icon={<Users size={22} />} label="Customers" active={activeTab === 'customers'} onClick={() => { setActiveTab('customers'); setIsMobileMenuOpen(false); }} color="blue" />
+                </>
+              )}
+              {(userRole === 'admin' || userRole === 'fixer') && (
+                <MenuButton icon={<Wrench size={22} />} label="Fixer" active={activeTab === 'fixer'} onClick={() => { setActiveTab('fixer'); setIsMobileMenuOpen(false); }} color="blue" />
+              )}
               <MenuButton icon={<Heart size={22} />} label="Personal" active={activeTab === 'personal'} onClick={() => { setActiveTab('personal'); setIsMobileMenuOpen(false); }} color="pink" />
-              <MenuButton icon={<LayoutDashboard size={22} />} label="Settings" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }} color="blue" />
+              {userRole === 'admin' && (
+                <MenuButton icon={<LayoutDashboard size={22} />} label="Settings" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }} color="blue" />
+              )}
             </div>
 
             <div className="space-y-3 mb-8">
@@ -467,6 +598,7 @@ export default function App() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   );
 }
 

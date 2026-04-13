@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, handleFirestoreError, OperationType, onSnapshot, query, orderBy, limit } from '../firebase';
-import { Product, StockLog } from '../types';
+import { Product, StockLog, Settings } from '../types';
 import { 
   Plus, 
+  Minus,
   Search, 
   Edit2, 
   Trash2, 
@@ -37,14 +38,19 @@ import BarcodeGenerator from 'react-barcode';
 
 interface InventoryProps {
   products: Product[];
+  settings: Settings | null;
 }
 
-export default function Inventory({ products }: InventoryProps) {
+export default function Inventory({ products, settings }: InventoryProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
   const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
   const [printingProduct, setPrintingProduct] = useState<Product | null>(null);
+  const [stockInMode, setStockInMode] = useState(false);
+  const [bulkUpdateMode, setBulkUpdateMode] = useState(false);
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [prefilledBarcode, setPrefilledBarcode] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [stockHistory, setStockHistory] = useState<StockLog[]>([]);
   const [logToDelete, setLogToDelete] = useState<{logId: string, productId: string} | null>(null);
@@ -52,6 +58,7 @@ export default function Inventory({ products }: InventoryProps) {
   const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'price-low' | 'price-high' | 'stock-low' | 'stock-high' | 'newest'>('newest');
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const printRef = useRef<HTMLDivElement>(null);
 
   const groupedHistory = useMemo(() => {
     const groups: { [key: string]: StockLog[] } = {};
@@ -96,6 +103,7 @@ export default function Inventory({ products }: InventoryProps) {
   const tableRef = useRef<HTMLTableSectionElement>(null);
   const mobileRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -119,6 +127,86 @@ export default function Inventory({ products }: InventoryProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen]);
+
+  // Barcode listener for Stock In mode
+  useEffect(() => {
+    if (!stockInMode) return;
+
+    const focusInterval = setInterval(() => {
+      const activeElement = document.activeElement;
+      const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+      if (!isModalOpen && !isInput) {
+        barcodeInputRef.current?.focus();
+      }
+    }, 1000);
+
+    return () => clearInterval(focusInterval);
+  }, [stockInMode, isModalOpen]);
+
+  const handleBarcodeStockIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!barcodeInput.trim()) return;
+
+    const product = products.find(p => p.barcode?.toLowerCase() === barcodeInput.toLowerCase());
+    if (product) {
+      try {
+        const newStock = product.stock + 1;
+        await updateDoc(doc(db, 'products', product.id), {
+          stock: newStock,
+          updatedAt: Timestamp.now()
+        });
+
+        await addDoc(collection(db, 'products', product.id, 'stockHistory'), {
+          type: 'addition',
+          amount: 1,
+          previousStock: product.stock,
+          newStock: newStock,
+          timestamp: Timestamp.now(),
+          note: 'Stock added via Barcode Scanner (Stock In Mode)'
+        });
+
+        setSuccessMessage(`Added 1 unit to ${product.name}`);
+        setTimeout(() => setSuccessMessage(null), 2000);
+        setBarcodeInput('');
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `products/${product.id}`);
+      }
+    } else {
+      if (window.confirm(`Product with barcode "${barcodeInput}" not found. Would you like to add it now?`)) {
+        setEditingProduct(null);
+        setImageUrlInput('');
+        setPrefilledBarcode(barcodeInput);
+        setIsModalOpen(true);
+      }
+      setBarcodeInput('');
+    }
+  };
+
+  const handleQuickStockUpdate = async (product: Product, amount: number) => {
+    try {
+      const newStock = Math.max(0, product.stock + amount);
+      if (newStock === product.stock) return;
+
+      await updateDoc(doc(db, 'products', product.id), {
+        stock: newStock,
+        updatedAt: Timestamp.now()
+      });
+
+      await addDoc(collection(db, 'products', product.id, 'stockHistory'), {
+        type: amount > 0 ? 'addition' : 'adjustment',
+        amount: Math.abs(amount),
+        previousStock: product.stock,
+        newStock: newStock,
+        timestamp: Timestamp.now(),
+        note: `Quick stock ${amount > 0 ? 'addition' : 'adjustment'}`
+      });
+
+      setSuccessMessage(`${product.name} stock updated to ${newStock}`);
+      setTimeout(() => setSuccessMessage(null), 2000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `products/${product.id}`);
+    }
+  };
 
   useEffect(() => {
     if (tableRef.current && products.length > 0) {
@@ -171,6 +259,7 @@ export default function Inventory({ products }: InventoryProps) {
     try {
       const productData = {
         name: (formData.get('name') as string) || '',
+        brand: (formData.get('brand') as string) || '',
         category: (formData.get('category') as string) || '',
         description: (formData.get('description') as string) || '',
         notes: notes,
@@ -191,6 +280,7 @@ export default function Inventory({ products }: InventoryProps) {
         // Detect other changes for history
         const changes: string[] = [];
         if (editingProduct.name !== productData.name) changes.push(`Name: ${editingProduct.name} → ${productData.name}`);
+        if (editingProduct.brand !== productData.brand) changes.push(`Brand: ${editingProduct.brand || 'None'} → ${productData.brand || 'None'}`);
         if (editingProduct.price !== productData.price) changes.push(`Price: ৳${editingProduct.price} → ৳${productData.price}`);
         if (editingProduct.cost !== productData.cost) changes.push(`Cost: ৳${editingProduct.cost} → ৳${productData.cost}`);
         if (editingProduct.category !== productData.category) changes.push(`Category: ${editingProduct.category} → ${productData.category}`);
@@ -257,6 +347,7 @@ export default function Inventory({ products }: InventoryProps) {
     setIsModalOpen(false);
     setEditingProduct(null);
     setImageUrlInput('');
+    setPrefilledBarcode('');
     setError(null);
   };
 
@@ -393,6 +484,52 @@ export default function Inventory({ products }: InventoryProps) {
 
   return (
     <div className="space-y-4 min-h-[600px]" ref={containerRef}>
+      {/* Stock In Mode Banner */}
+      <AnimatePresence>
+        {stockInMode && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-emerald-600 text-white p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg shadow-emerald-100 dark:shadow-none mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/20 rounded-xl">
+                  <BarcodeIcon size={24} className="animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="font-black uppercase tracking-tight">Stock Arrival Mode Active</h4>
+                  <p className="text-xs text-emerald-100">Scan any product barcode to increment its stock by 1 unit automatically.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 w-full md:w-auto">
+                <form onSubmit={handleBarcodeStockIn} className="relative flex-1 md:w-64">
+                  <input
+                    ref={barcodeInputRef}
+                    type="text"
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    placeholder="Scanning..."
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/50 placeholder:text-white/50"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <span className="w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Live</span>
+                  </div>
+                </form>
+                <button
+                  onClick={() => setStockInMode(false)}
+                  className="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Inventory Stats Bar */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -496,6 +633,29 @@ export default function Inventory({ products }: InventoryProps) {
             </button>
 
             <button
+              onClick={() => setStockInMode(!stockInMode)}
+              className={cn(
+                "p-2 rounded-xl transition-all border flex items-center gap-2 px-3",
+                stockInMode 
+                  ? "bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-100 dark:shadow-none" 
+                  : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700"
+              )}
+              title="Stock Arrival Mode (Scanner)"
+            >
+              <BarcodeIcon size={18} />
+              <span className="text-xs font-bold hidden md:inline">Stock In</span>
+            </button>
+
+            <button
+              onClick={() => setBulkUpdateMode(true)}
+              className="p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl transition-all flex items-center gap-2 px-3"
+              title="Bulk Stock Update"
+            >
+              <TrendingUp size={18} />
+              <span className="text-xs font-bold hidden md:inline">Bulk Update</span>
+            </button>
+
+            <button
               onClick={() => {
                 setEditingProduct(null);
                 setImageUrlInput('');
@@ -525,6 +685,11 @@ export default function Inventory({ products }: InventoryProps) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">{product.name}</h4>
+                  {product.brand && (
+                    <span className="text-[8px] font-bold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1 rounded-sm uppercase tracking-wider">
+                      {product.brand}
+                    </span>
+                  )}
                   {product.barcode && (
                     <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[8px] font-mono px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                       {product.barcode}
@@ -671,6 +836,11 @@ export default function Inventory({ products }: InventoryProps) {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-bold text-sm text-slate-900 dark:text-white">{product.name}</p>
+                        {product.brand && (
+                          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md uppercase tracking-wider">
+                            {product.brand}
+                          </span>
+                        )}
                         {product.isFeatured && (
                           <span className="bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider">
                             ★
@@ -775,17 +945,18 @@ export default function Inventory({ products }: InventoryProps) {
                   </div>
                 </td>
                 <td className="px-6 py-4 text-right">
-                  <div className="flex justify-end gap-2 transition-opacity">
+                  <div className="flex justify-end gap-1.5">
                     <button
                       onClick={() => setPrintingProduct(product)}
-                      className="p-2 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-xl transition-all"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg border border-slate-200 dark:border-slate-700 transition-all group/btn"
                       title="Print Barcode Label"
                     >
-                      <Printer size={16} />
+                      <Printer size={14} className="group-hover/btn:scale-110 transition-transform" />
+                      <span className="text-[10px] font-black uppercase tracking-wider">Label</span>
                     </button>
                     <button
                       onClick={() => setHistoryProduct(product)}
-                      className="p-2 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-xl transition-all"
+                      className="p-2 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg border border-transparent hover:border-indigo-100 dark:hover:border-indigo-500/20 transition-all"
                       title="Stock History"
                     >
                       <History size={16} />
@@ -796,14 +967,14 @@ export default function Inventory({ products }: InventoryProps) {
                         setImageUrlInput(product.imageUrl || '');
                         setIsModalOpen(true);
                       }}
-                      className="p-2 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-xl transition-all"
+                      className="p-2 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg border border-transparent hover:border-indigo-100 dark:hover:border-indigo-500/20 transition-all"
                       title="Edit Product"
                     >
                       <Edit2 size={16} />
                     </button>
                     <button
                       onClick={() => setDeletingProduct(product)}
-                      className="p-2 text-slate-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-all"
+                      className="p-2 text-slate-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg border border-transparent hover:border-red-100 dark:hover:border-red-500/20 transition-all"
                       title="Delete Product"
                     >
                       <Trash2 size={16} />
@@ -836,11 +1007,23 @@ export default function Inventory({ products }: InventoryProps) {
               className="fixed inset-y-0 right-0 w-full max-w-md bg-white dark:bg-slate-900 shadow-2xl z-[70] flex flex-col border-l border-slate-200 dark:border-slate-800 h-[100dvh]"
             >
               <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/30 shrink-0">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    {editingProduct ? 'Edit Product' : 'Add New Product'}
-                  </h3>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Update your inventory details</p>
+                <div className="flex items-center gap-3">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                      {editingProduct ? 'Edit Product' : 'Add New Product'}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">Update your inventory details</p>
+                  </div>
+                  {editingProduct && (
+                    <button
+                      type="button"
+                      onClick={() => setPrintingProduct(editingProduct)}
+                      className="ml-2 p-2 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-xl transition-all border border-indigo-100 dark:border-indigo-500/20 flex items-center gap-1.5 px-3"
+                    >
+                      <Printer size={14} />
+                      <span className="text-[10px] font-bold uppercase">Print Label</span>
+                    </button>
+                  )}
                 </div>
                 <button 
                   onClick={closeModal} 
@@ -873,25 +1056,37 @@ export default function Inventory({ products }: InventoryProps) {
                           <BarcodeIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                           <input
                             name="barcode"
-                            defaultValue={editingProduct?.barcode}
+                            defaultValue={editingProduct?.barcode || prefilledBarcode}
                             className="w-full pl-9 pr-20 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all font-mono"
                             placeholder="Scan or enter..."
                           />
                           <button
                             type="button"
                             onClick={(e) => {
+                              const form = (e.currentTarget.closest('form') as HTMLFormElement);
+                              const name = (form.querySelector('[name="name"]') as HTMLInputElement).value;
+                              const brand = (form.querySelector('[name="brand"]') as HTMLInputElement).value;
                               const input = e.currentTarget.previousElementSibling as HTMLInputElement;
-                              const randomBarcode = Math.random().toString(36).substring(2, 10).toUpperCase();
-                              input.value = randomBarcode;
+                              
+                              let sku = '';
+                              if (brand && name) {
+                                const brandPart = brand.substring(0, 3).toUpperCase();
+                                const namePart = name.substring(0, 3).toUpperCase();
+                                const randomPart = Math.random().toString(36).substring(2, 6).toUpperCase();
+                                sku = `${brandPart}-${namePart}-${randomPart}`;
+                              } else {
+                                sku = Math.random().toString(36).substring(2, 10).toUpperCase();
+                              }
+                              input.value = sku;
                             }}
                             className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-black text-indigo-600 hover:text-indigo-700 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-1 rounded-lg uppercase tracking-tighter"
                           >
-                            Generate
+                            Generate SKU
                           </button>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-3 gap-3">
                         <div className="space-y-1">
                           <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 ml-1">Product Name</label>
                           <input
@@ -900,6 +1095,15 @@ export default function Inventory({ products }: InventoryProps) {
                             defaultValue={editingProduct?.name}
                             className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all"
                             placeholder="e.g. Earphones"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 ml-1">Brand</label>
+                          <input
+                            name="brand"
+                            defaultValue={editingProduct?.brand}
+                            className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all"
+                            placeholder="e.g. Sony"
                           />
                         </div>
                         <div className="space-y-1">
@@ -952,7 +1156,7 @@ export default function Inventory({ products }: InventoryProps) {
                           name="stock"
                           type="number"
                           required
-                          defaultValue={editingProduct?.stock}
+                          defaultValue={editingProduct?.stock ?? (prefilledBarcode ? 1 : 0)}
                           className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all font-bold"
                         />
                       </div>
@@ -1314,18 +1518,25 @@ export default function Inventory({ products }: InventoryProps) {
                   </p>
                   
                   {/* Preview Box */}
-                  <div className="bg-white border border-slate-200 shadow-sm p-4 rounded-lg flex flex-col items-center justify-center w-[200px] h-[120px]">
-                    <p className="text-[10px] font-bold text-black uppercase tracking-wider mb-1 truncate w-full text-center">StockPilot</p>
-                    <p className="text-[11px] font-bold text-black truncate w-full text-center leading-tight">{printingProduct.name}</p>
-                    <p className="text-[10px] font-bold text-black mb-1">৳{printingProduct.price}</p>
-                    <div className="scale-75 origin-top">
+                  <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-center w-[151px] h-[113px] overflow-hidden">
+                    <div className="w-full text-center mb-0.5">
+                      <p className="text-[10px] font-black text-black uppercase tracking-wider m-0 leading-none">{settings?.shopName || 'SHOP NAME'}</p>
+                    </div>
+                    <div className="w-full text-center my-1">
+                      <p className="text-[8px] font-black text-slate-700 uppercase truncate w-full m-0 leading-tight">{printingProduct.name}</p>
+                      <p className="text-[10px] font-black text-black uppercase tracking-widest m-0 mt-0.5 leading-none">
+                        {printingProduct.barcode || printingProduct.id.slice(0, 8).toUpperCase()}
+                      </p>
+                    </div>
+                    <div className="scale-[0.85] origin-center">
                       <BarcodeGenerator 
                         value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
-                        width={1.5} 
-                        height={30} 
-                        fontSize={12}
+                        format="CODE128"
+                        width={1.2} 
+                        height={25} 
+                        fontSize={0}
                         margin={0}
-                        displayValue={true}
+                        displayValue={false}
                       />
                     </div>
                   </div>
@@ -1339,7 +1550,66 @@ export default function Inventory({ products }: InventoryProps) {
                   Cancel
                 </button>
                 <button
-                  onClick={() => window.print()}
+                  onClick={() => {
+                    if (!printRef.current) {
+                      setError("Print content not found. Please try again.");
+                      return;
+                    }
+
+                    const iframe = document.createElement('iframe');
+                    iframe.style.position = 'fixed';
+                    iframe.style.right = '0';
+                    iframe.style.bottom = '0';
+                    iframe.style.width = '0';
+                    iframe.style.height = '0';
+                    iframe.style.border = 'none';
+                    document.body.appendChild(iframe);
+
+                    const printContent = printRef.current.innerHTML;
+                    if (!printContent) {
+                      setError("No content to print.");
+                      return;
+                    }
+
+                    const doc = iframe.contentWindow?.document;
+                    if (doc) {
+                      doc.open();
+                      doc.write(`
+                        <html>
+                          <head>
+                            <title>Print Labels</title>
+                            <style>
+                              @page { size: 40mm 30mm; margin: 0; }
+                              body { margin: 0; padding: 0; }
+                              .print-container { display: flex; flex-direction: column; align-items: center; width: 100%; }
+                            </style>
+                          </head>
+                          <body>
+                            <div class="print-container">${printContent}</div>
+                          </body>
+                        </html>
+                      `);
+                      doc.close();
+
+                      const removeIframe = () => {
+                        if (document.body.contains(iframe)) {
+                          document.body.removeChild(iframe);
+                        }
+                      };
+
+                      // Wait for content and barcodes to be ready
+                      setTimeout(() => {
+                        try {
+                          iframe.contentWindow?.focus();
+                          iframe.contentWindow?.print();
+                        } catch (e) {
+                          console.error("Print failed:", e);
+                          setError("Print failed. If you are in the preview, please open the app in a new tab to print.");
+                        }
+                        setTimeout(removeIframe, 1000);
+                      }, 800);
+                    }
+                  }}
                   className="flex-1 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 dark:shadow-none flex items-center justify-center gap-2"
                 >
                   <Printer size={16} />
@@ -1350,20 +1620,29 @@ export default function Inventory({ products }: InventoryProps) {
           </div>
 
           {/* Actual Printable Area (Only visible during print) */}
-          <div className="hidden print-only flex-col items-center w-full bg-white">
+          <div ref={printRef} className="opacity-0 pointer-events-none absolute -z-50 flex flex-col items-center w-full bg-white">
             {Array.from({ length: printQuantity }).map((_, i) => (
-              <div key={i} className="flex flex-col items-center justify-center text-black w-full mb-8" style={{ maxWidth: '40mm', height: '30mm', pageBreakAfter: 'always' }}>
-                <p className="text-[8px] font-bold uppercase tracking-wider m-0 p-0 leading-none">StockPilot</p>
-                <p className="text-[10px] font-bold m-0 p-0 leading-tight text-center mt-0.5 truncate w-full">{printingProduct.name}</p>
-                <p className="text-[9px] font-bold m-0 p-0 leading-none mt-0.5 mb-1">৳{printingProduct.price}</p>
-                <BarcodeGenerator 
-                  value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
-                  width={1.2} 
-                  height={25} 
-                  fontSize={10}
-                  margin={0}
-                  displayValue={true}
-                />
+              <div key={i} className="flex flex-col items-center justify-center text-black w-full" style={{ width: '40mm', height: '30mm', pageBreakAfter: 'always', padding: '2mm', boxSizing: 'border-box' }}>
+                <div className="w-full text-center">
+                  <p style={{ fontSize: '10pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0', lineHeight: '1' }}>{settings?.shopName || 'SHOP NAME'}</p>
+                </div>
+                <div className="w-full text-center" style={{ margin: '1.5mm 0' }}>
+                  <p style={{ fontSize: '7pt', fontWeight: '900', textTransform: 'uppercase', margin: '0', lineHeight: '1.1', textAlign: 'center' }}>{printingProduct.name}</p>
+                  <p style={{ fontSize: '10pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '1mm 0 0 0', lineHeight: '1' }}>
+                    {printingProduct.barcode || printingProduct.id.slice(0, 8).toUpperCase()}
+                  </p>
+                </div>
+                <div style={{ transform: 'scale(1.1)', transformOrigin: 'center' }}>
+                  <BarcodeGenerator 
+                    value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
+                    format="CODE128"
+                    width={1.2} 
+                    height={25} 
+                    fontSize={0}
+                    margin={0}
+                    displayValue={false}
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -1403,6 +1682,99 @@ export default function Inventory({ products }: InventoryProps) {
           </div>
         </div>
       )}
+      {/* Bulk Update Modal */}
+      <AnimatePresence>
+        {bulkUpdateMode && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white dark:bg-slate-900 rounded-[2.5rem] w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-2xl">
+                    <TrendingUp size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Bulk Stock Update</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Quickly adjust stock levels for all products.</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setBulkUpdateMode(false)}
+                  className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {products.map(product => (
+                    <div key={product.id} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-3xl border border-slate-100 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-500/30 transition-all group">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden shrink-0">
+                          {product.imageUrl ? (
+                            <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-300">
+                              <Package size={20} />
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">{product.name}</h4>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">{product.category}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Current</p>
+                          <p className={cn(
+                            "text-lg font-black",
+                            product.stock <= product.minStock ? "text-amber-500" : "text-slate-900 dark:text-white"
+                          )}>{product.stock}</p>
+                        </div>
+                        <div className="flex items-center gap-2 bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                          <button
+                            onClick={() => handleQuickStockUpdate(product, -1)}
+                            className="p-2 hover:bg-red-50 dark:hover:bg-red-500/10 text-slate-400 hover:text-red-500 rounded-xl transition-all active:scale-90"
+                          >
+                            <Minus size={18} />
+                          </button>
+                          <div className="w-10 text-center font-black text-slate-900 dark:text-white">
+                            {/* Just a visual separator or we could add an input here */}
+                            <div className="w-px h-4 bg-slate-200 dark:bg-slate-800 mx-auto" />
+                          </div>
+                          <button
+                            onClick={() => handleQuickStockUpdate(product, 1)}
+                            className="p-2 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 text-slate-400 hover:text-emerald-500 rounded-xl transition-all active:scale-90"
+                          >
+                            <Plus size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                <button
+                  onClick={() => setBulkUpdateMode(false)}
+                  className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Reset Dates Confirmation */}
       <AnimatePresence>
         {showResetConfirm && (

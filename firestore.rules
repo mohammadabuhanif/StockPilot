@@ -31,9 +31,45 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
     function isAdmin() {
       return isAuthenticated() && 
-        (request.auth.token.email == "abuhanifindiabased@gmail.com" && request.auth.token.email_verified == true);
+        (request.auth.token.email == "abuhanifindiabased@gmail.com" || 
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin'));
+    }
+
+    function isFixer() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == 'fixer';
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role', 'displayName']) &&
+             data.email is string &&
+             data.role in ['admin', 'fixer', 'staff'] &&
+             data.displayName is string &&
+             (!('pin' in data) || (data.pin is string && data.pin.matches('^[0-9]{4,6}$')));
+    }
+
+    function isValidRepairJob(data) {
+      return data.keys().hasAll(['fixerId', 'customerName', 'customerPhone', 'deviceModel', 'issueDescription', 'status', 'estimatedCost', 'finalCost', 'partsCost', 'laborCost', 'earnings', 'createdAt', 'updatedAt']) &&
+             (isAdmin() || data.fixerId == request.auth.uid) &&
+             data.customerName is string && data.customerName.size() > 0 &&
+             data.customerPhone is string &&
+             data.deviceModel is string &&
+             data.issueDescription is string &&
+             data.status in ['pending', 'diagnosing', 'waiting_parts', 'repairing', 'ready', 'delivered', 'cancelled'] &&
+             data.estimatedCost is number &&
+             data.finalCost is number &&
+             data.partsCost is number &&
+             data.laborCost is number &&
+             data.earnings is number &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
     }
 
     function isValidProduct(data) {
@@ -134,6 +170,34 @@ service cloud.firestore {
              (!('notes' in data) || (data.notes is string && data.notes.size() < 2000));
     }
 
+    function isValidCashRegisterSession(data) {
+      return data.keys().hasAll(['registerId', 'date', 'status', 'openedAt', 'openedBy', 'openingBalance']) &&
+             data.registerId in ['sales', 'service', 'fixer', 'mfs'] &&
+             data.date is string && data.date.size() == 10 &&
+             data.status in ['open', 'closed'] &&
+             data.openedAt is timestamp &&
+             data.openedBy == request.auth.uid &&
+             data.openingBalance is number && data.openingBalance >= 0 &&
+             (!('closedAt' in data) || data.closedAt is timestamp) &&
+             (!('closedBy' in data) || data.closedBy is string) &&
+             (!('closingBalance' in data) || data.closingBalance is number) &&
+             (!('expectedBalance' in data) || data.expectedBalance is number) &&
+             (!('discrepancy' in data) || data.discrepancy is number) &&
+             (!('closingImageUrl' in data) || data.closingImageUrl is string && data.closingImageUrl.size() < 1000) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 1000));
+    }
+
+    function isValidMFSTransaction(data) {
+      return data.keys().hasAll(['provider', 'type', 'amount', 'commission', 'customerPhone', 'createdAt']) &&
+             data.provider in ['bkash', 'nagad', 'rocket', 'recharge', 'other'] &&
+             data.type in ['cash_in', 'cash_out', 'send_money', 'recharge'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.commission is number && data.commission >= 0 &&
+             data.customerPhone is string &&
+             data.createdAt is timestamp &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 1000));
+    }
+
     function isValidSettings(data) {
       return data.keys().hasAll(['shopName']) &&
              data.shopName is string && data.shopName.size() > 0 && data.shopName.size() < 100 &&
@@ -143,23 +207,36 @@ service cloud.firestore {
              (!('memoFooter' in data) || (data.memoFooter is string && data.memoFooter.size() < 500));
     }
 
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == userId && request.resource.data.role == resource.data.role);
+    }
+
+    match /repairJobs/{jobId} {
+      allow read: if isAdmin() || (isFixer() && resource.data.fixerId == request.auth.uid);
+      allow create: if (isAdmin() || isFixer()) && isValidRepairJob(request.resource.data);
+      allow update: if isAdmin() || (isFixer() && resource.data.fixerId == request.auth.uid && isValidRepairJob(request.resource.data));
+      allow delete: if isAdmin();
+    }
+
     match /products/{productId} {
-      allow read: if isAuthenticated() || resource.data.isFeatured == true;
+      allow read: if isAdmin() || resource.data.isFeatured == true;
       allow create: if isAdmin() && isValidProduct(request.resource.data);
       allow update: if isAdmin() && isValidProduct(request.resource.data);
       allow delete: if isAdmin();
 
       match /stockHistory/{logId} {
-        allow read: if isAuthenticated();
+        allow read: if isAdmin();
         allow create: if isAdmin() && isValidStockLog(request.resource.data);
-        allow update, delete: if false; // Logs are immutable
+        allow update, delete: if false;
       }
     }
 
     match /sales/{saleId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin();
       allow create: if isAdmin() && isValidSale(request.resource.data);
-      allow update: if false; // Sales records are immutable
+      allow update: if false;
       allow delete: if isAdmin();
     }
 
@@ -173,40 +250,54 @@ service cloud.firestore {
     match /ideas/{ideaId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && isValidIdea(request.resource.data);
-      allow update: if false; // Ideas are immutable
+      allow update: if false;
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     match /services/{serviceId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin();
       allow create: if isAdmin() && isValidService(request.resource.data);
       allow update: if isAdmin() && isValidService(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /serviceOrders/{orderId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidServiceOrder(request.resource.data);
-      allow update: if isAuthenticated() && isValidServiceOrder(request.resource.data);
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidServiceOrder(request.resource.data);
+      allow update: if isAdmin() && isValidServiceOrder(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /expenses/{expenseId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin();
       allow create: if isAdmin() && isValidExpense(request.resource.data);
       allow update: if isAdmin() && isValidExpense(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /customers/{customerId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidCustomer(request.resource.data);
+      allow update: if isAdmin() && isValidCustomer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /cashRegisters/{sessionId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidCustomer(request.resource.data);
-      allow update: if isAuthenticated() && isValidCustomer(request.resource.data);
+      allow create: if isAuthenticated() && isValidCashRegisterSession(request.resource.data);
+      allow update: if isAuthenticated() && isValidCashRegisterSession(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /mfsTransactions/{txId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidMFSTransaction(request.resource.data);
+      allow update: if isAdmin() && isValidMFSTransaction(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /settings/{settingId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin();
       allow write: if isAdmin() && isValidSettings(request.resource.data);
     }
 

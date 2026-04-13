@@ -130,9 +130,63 @@
         "memoFooter": { "type": "string", "description": "A custom message at the bottom of the memo." }
       },
       "required": ["shopName"]
+    },
+    "AppUser": {
+      "title": "AppUser",
+      "description": "A user of the application with specific roles and security PIN.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique Firebase Auth ID." },
+        "email": { "type": "string", "description": "The user's email address." },
+        "displayName": { "type": "string", "description": "The user's display name." },
+        "role": { "type": "string", "enum": ["admin", "fixer", "staff"], "description": "The user's role." },
+        "pin": { "type": "string", "description": "A 4-6 digit security PIN." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user was created." }
+      },
+      "required": ["uid", "email", "role", "displayName", "createdAt"]
+    },
+    "CashRegisterSession": {
+      "title": "CashRegisterSession",
+      "description": "A daily record of the physical cash register session.",
+      "type": "object",
+      "properties": {
+        "registerId": { "type": "string", "enum": ["sales", "service", "fixer", "mfs"], "description": "The specific register/drawer." },
+        "date": { "type": "string", "description": "The date of the record (YYYY-MM-DD)." },
+        "status": { "type": "string", "enum": ["open", "closed"], "description": "Session status." },
+        "openedAt": { "type": "string", "format": "date-time", "description": "Opening time." },
+        "openedBy": { "type": "string", "description": "User ID who opened." },
+        "openingBalance": { "type": "number", "description": "Initial cash in drawer." },
+        "closedAt": { "type": "string", "format": "date-time", "description": "Closing time." },
+        "closedBy": { "type": "string", "description": "User ID who closed." },
+        "closingBalance": { "type": "number", "description": "Actual cash counted." },
+        "expectedBalance": { "type": "number", "description": "System calculated cash." },
+        "discrepancy": { "type": "number", "description": "Difference between actual and expected." },
+        "closingImageUrl": { "type": "string", "description": "Photo proof of closing cash." },
+        "notes": { "type": "string", "description": "Additional notes." }
+      },
+      "required": ["registerId", "date", "status", "openedAt", "openedBy", "openingBalance"]
+    },
+    "MFSTransaction": {
+      "title": "MFSTransaction",
+      "description": "A Mobile Financial Service transaction.",
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string", "enum": ["bkash", "nagad", "rocket", "recharge", "other"], "description": "The service provider." },
+        "type": { "type": "string", "enum": ["cash_in", "cash_out", "send_money", "recharge"], "description": "The transaction type." },
+        "amount": { "type": "number", "description": "The transaction amount." },
+        "commission": { "type": "number", "description": "The commission earned." },
+        "customerPhone": { "type": "string", "description": "The customer's phone number." },
+        "notes": { "type": "string", "description": "Additional notes." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The creation time." }
+      },
+      "required": ["provider", "type", "amount", "commission", "customerPhone", "createdAt"]
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": "AppUser",
+      "description": "Collection of application users."
+    },
     "/products/{productId}": {
       "schema": "Product",
       "description": "Collection of products in the inventory."
@@ -164,6 +218,14 @@
     "/customers/{customerId}": {
       "schema": "Customer",
       "description": "Collection of shop customers."
+    },
+    "/cashRegisters/{sessionId}": {
+      "schema": "CashRegisterSession",
+      "description": "Collection of daily cash register sessions."
+    },
+    "/mfsTransactions/{txId}": {
+      "schema": "MFSTransaction",
+      "description": "Collection of MFS transactions."
     },
     "/settings/global": {
       "schema": "Settings",

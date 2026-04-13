@@ -1,27 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, onSnapshot, query, orderBy, handleFirestoreError, OperationType, auth } from '../firebase';
 import { Service, ServiceOrder } from '../types';
-import { Plus, Search, Filter, Clock, CheckCircle2, Truck, AlertCircle, Phone, User, FileText, Printer, MoreVertical, Trash2, Edit2 } from 'lucide-react';
-import { format } from 'date-fns';
+import { Plus, Search, Filter, Clock, CheckCircle2, Truck, AlertCircle, Phone, User, FileText, Printer, MoreVertical, Trash2, Edit2, TrendingUp, DollarSign } from 'lucide-react';
+import { format, isSameDay, subDays } from 'date-fns';
 import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+
+import { CashDrawerBox } from './CashDrawerBox';
+import { MobileFinancialServices } from './MobileFinancialServices';
 
 export default function ServiceCenter() {
   const [services, setServices] = useState<Service[]>([]);
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [isAddingService, setIsAddingService] = useState(false);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
-  const [activeTab, setActiveTab] = useState<'orders' | 'catalog'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'catalog' | 'mfs'>('orders');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [orderSortBy, setOrderSortBy] = useState<'newest' | 'oldest' | 'price-high' | 'price-low' | 'customer'>('newest');
   const [catalogSortBy, setCatalogSortBy] = useState<'name' | 'price-high' | 'price-low'>('name');
   const [deletingOrder, setDeletingOrder] = useState<ServiceOrder | null>(null);
+  const [editingService, setEditingService] = useState<Service | null>(null);
 
   // New Service Form State
-  const [newService, setNewService] = useState({
+  const [newService, setNewService] = useState<{
+    name: string;
+    category: 'printing' | 'document' | 'other';
+    basePrice: number;
+    description: string;
+  }>({
     name: '',
-    category: 'printing' as const,
+    category: 'printing',
     basePrice: 0,
     description: ''
   });
@@ -52,14 +61,26 @@ export default function ServiceCenter() {
     };
   }, []);
 
+  const incomeStats = {
+    daily: orders.filter(o => o.createdAt && isSameDay(o.createdAt.toDate(), new Date())).reduce((sum, o) => sum + (o.price || 0), 0),
+    weekly: orders.filter(o => o.createdAt && o.createdAt.toDate() > subDays(new Date(), 7)).reduce((sum, o) => sum + (o.price || 0), 0),
+    monthly: orders.filter(o => o.createdAt && o.createdAt.toDate() > subDays(new Date(), 30)).reduce((sum, o) => sum + (o.price || 0), 0),
+    total: orders.reduce((sum, o) => sum + (o.price || 0), 0)
+  };
+
   const handleAddService = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'services'), newService);
+      if (editingService) {
+        await updateDoc(doc(db, 'services', editingService.id), newService);
+      } else {
+        await addDoc(collection(db, 'services'), newService);
+      }
       setNewService({ name: '', category: 'printing', basePrice: 0, description: '' });
       setIsAddingService(false);
+      setEditingService(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'services');
+      handleFirestoreError(err, editingService ? OperationType.UPDATE : OperationType.CREATE, 'services');
     }
   };
 
@@ -162,38 +183,86 @@ export default function ServiceCenter() {
   return (
     <div className="space-y-6">
       {/* Header & Tabs */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-full sm:w-auto">
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={cn(
-              "flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all",
-              activeTab === 'orders' ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-slate-500"
-            )}
-          >
-            Service Orders
-          </button>
-          <button
-            onClick={() => setActiveTab('catalog')}
-            className={cn(
-              "flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all",
-              activeTab === 'catalog' ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-slate-500"
-            )}
-          >
-            Service Catalog
-          </button>
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+        <div className="flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-full sm:w-auto overflow-x-auto no-scrollbar">
+            <button
+              onClick={() => setActiveTab('orders')}
+              className={cn(
+                "flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap",
+                activeTab === 'orders' ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-slate-500"
+              )}
+            >
+              Service Orders
+            </button>
+            <button
+              onClick={() => setActiveTab('catalog')}
+              className={cn(
+                "flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap",
+                activeTab === 'catalog' ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-slate-500"
+              )}
+            >
+              Service Catalog
+            </button>
+            <button
+              onClick={() => setActiveTab('mfs')}
+              className={cn(
+                "flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap",
+                activeTab === 'mfs' ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm" : "text-slate-500"
+              )}
+            >
+              MFS & Recharge
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="bg-white dark:bg-slate-900 px-4 py-2 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex items-center gap-3">
+              <div className="p-1.5 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg">
+                <DollarSign size={16} />
+              </div>
+              <div>
+                <p className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">Today</p>
+                <p className="text-sm font-black text-slate-900 dark:text-white">৳{incomeStats.daily.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="bg-white dark:bg-slate-900 px-4 py-2 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex items-center gap-3">
+              <div className="p-1.5 bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-lg">
+                <TrendingUp size={16} />
+              </div>
+              <div>
+                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Weekly</p>
+                <p className="text-sm font-black text-slate-900 dark:text-white">৳{incomeStats.weekly.toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
         </div>
         
-        <button
-          onClick={() => activeTab === 'orders' ? setIsAddingOrder(true) : setIsAddingService(true)}
-          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95"
-        >
-          <Plus size={20} />
-          {activeTab === 'orders' ? 'New Order' : 'Add Service'}
-        </button>
+        {activeTab !== 'mfs' && (
+          <button
+            onClick={() => {
+              if (activeTab === 'orders') {
+                setIsAddingOrder(true);
+              } else {
+                setEditingService(null);
+                setNewService({ name: '', category: 'printing', basePrice: 0, description: '' });
+                setIsAddingService(true);
+              }
+            }}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-indigo-200 dark:shadow-none transition-all active:scale-95"
+          >
+            <Plus size={20} />
+            {activeTab === 'orders' ? 'New Order' : 'Add Service'}
+          </button>
+        )}
       </div>
 
-      {activeTab === 'orders' ? (
+      {activeTab === 'orders' && (
+        <CashDrawerBox registerId="service" registerName="Service Center Register" />
+      )}
+
+      {activeTab === 'mfs' ? (
+        <MobileFinancialServices />
+      ) : activeTab === 'orders' ? (
         <div className="space-y-4">
           {/* Filters */}
           <div className="flex flex-col md:flex-row gap-4">
@@ -362,7 +431,25 @@ export default function ServiceCenter() {
                   )}>
                     {service.category === 'printing' ? <Printer size={20} /> : <FileText size={20} />}
                   </div>
-                  <div className="text-lg font-black text-indigo-600 dark:text-indigo-400">৳{service.basePrice}</div>
+                  <div className="flex flex-col items-end">
+                    <div className="text-lg font-black text-indigo-600 dark:text-indigo-400">৳{service.basePrice}</div>
+                    <button 
+                      onClick={() => {
+                        setEditingService(service);
+                        setNewService({
+                          name: service.name,
+                          category: service.category,
+                          basePrice: service.basePrice,
+                          description: service.description || ''
+                        });
+                        setIsAddingService(true);
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg transition-all mt-1"
+                      title="Edit Service"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                  </div>
                 </div>
                 <h4 className="font-bold text-slate-900 dark:text-white mb-1">{service.name}</h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mb-4">{service.description || 'No description provided.'}</p>
@@ -479,8 +566,15 @@ export default function ServiceCenter() {
               className="bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
             >
               <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                <h3 className="text-xl font-black text-slate-900 dark:text-white">Add New Service</h3>
-                <button onClick={() => setIsAddingService(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors">
+                <h3 className="text-xl font-black text-slate-900 dark:text-white">{editingService ? 'Edit Service' : 'Add New Service'}</h3>
+                <button 
+                  onClick={() => {
+                    setIsAddingService(false);
+                    setEditingService(null);
+                    setNewService({ name: '', category: 'printing', basePrice: 0, description: '' });
+                  }} 
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+                >
                   <Plus size={20} className="rotate-45" />
                 </button>
               </div>
@@ -533,7 +627,7 @@ export default function ServiceCenter() {
                   type="submit"
                   className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-xl shadow-indigo-200 dark:shadow-none transition-all active:scale-95 mt-4"
                 >
-                  Add Service
+                  {editingService ? 'Update Service' : 'Add Service'}
                 </button>
               </form>
             </motion.div>

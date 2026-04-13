@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useRef, useState } from 'react';
-import { Product, Sale, ServiceOrder, Expense, Customer } from '../types';
-import { TrendingUp, DollarSign, Package, ShoppingBag, ArrowUpRight, ArrowDownRight, Zap, Clock, Users, TrendingDown } from 'lucide-react';
+import { Product, Sale, ServiceOrder, Expense, Customer, RepairJob } from '../types';
+import { TrendingUp, DollarSign, Package, ShoppingBag, ArrowUpRight, ArrowDownRight, Zap, Clock, Users, TrendingDown, Wrench, Printer } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { format, startOfDay, subDays, isSameDay } from 'date-fns';
 import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
@@ -12,9 +12,10 @@ interface DashboardProps {
   serviceOrders: ServiceOrder[];
   expenses: Expense[];
   customers: Customer[];
+  repairJobs: RepairJob[];
 }
 
-export default function Dashboard({ products, sales, serviceOrders, expenses, customers }: DashboardProps) {
+export default function Dashboard({ products, sales, serviceOrders, expenses, customers, repairJobs }: DashboardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
 
@@ -49,8 +50,19 @@ export default function Dashboard({ products, sales, serviceOrders, expenses, cu
   }, [mounted]);
 
   const stats = useMemo(() => {
-    const totalRevenue = sales.reduce((sum, s) => sum + s.totalPrice, 0);
-    const totalProfit = sales.reduce((sum, s) => sum + s.totalProfit, 0);
+    const totalSalesRevenue = sales.reduce((sum, s) => sum + s.totalPrice, 0);
+    const totalSalesProfit = sales.reduce((sum, s) => sum + s.totalProfit, 0);
+    
+    const totalRepairRevenue = repairJobs.reduce((sum, j) => sum + (j.finalCost || 0), 0);
+    const totalRepairProfit = repairJobs.reduce((sum, j) => sum + (j.earnings || 0), 0);
+
+    const totalServiceRevenue = serviceOrders.reduce((sum, o) => sum + (o.price || 0), 0);
+    // For service orders, we assume profit is the full price (labor/service) unless we have a cost model
+    const totalServiceProfit = totalServiceRevenue; 
+
+    const totalRevenue = totalSalesRevenue + totalRepairRevenue + totalServiceRevenue;
+    const totalProfit = totalSalesProfit + totalRepairProfit + totalServiceProfit;
+    
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
     const netProfit = totalProfit - totalExpenses;
     const lowStockCount = products.filter(p => p.stock <= p.minStock).length;
@@ -64,14 +76,43 @@ export default function Dashboard({ products, sales, serviceOrders, expenses, cu
     const last7Days = Array.from({ length: 7 }, (_, i) => {
       const date = subDays(new Date(), i);
       const daySales = sales.filter(s => s.timestamp && isSameDay(s.timestamp.toDate(), date));
+      const dayRepairs = repairJobs.filter(j => j.createdAt && isSameDay(j.createdAt.toDate(), date));
+      const dayServices = serviceOrders.filter(o => o.createdAt && isSameDay(o.createdAt.toDate(), date));
       const dayProducts = products.filter(p => p.createdAt && isSameDay(p.createdAt.toDate(), date));
+      
+      const salesRev = daySales.reduce((sum, s) => sum + s.totalPrice, 0);
+      const repairRev = dayRepairs.reduce((sum, j) => sum + (j.finalCost || 0), 0);
+      const serviceRev = dayServices.reduce((sum, o) => sum + (o.price || 0), 0);
+
       return {
         date: format(date, 'MMM dd'),
-        revenue: daySales.reduce((sum, s) => sum + s.totalPrice, 0),
-        profit: daySales.reduce((sum, s) => sum + s.totalProfit, 0),
+        revenue: salesRev + repairRev + serviceRev,
+        salesRevenue: salesRev,
+        repairRevenue: repairRev,
+        serviceRevenue: serviceRev,
+        profit: daySales.reduce((sum, s) => sum + s.totalProfit, 0) + 
+                dayRepairs.reduce((sum, j) => sum + (j.earnings || 0), 0) +
+                serviceRev,
         newProducts: dayProducts.length,
       };
     }).reverse();
+
+    // Service Center Specific Stats (Printing etc)
+    const serviceStats = {
+      daily: serviceOrders.filter(o => o.createdAt && isSameDay(o.createdAt.toDate(), new Date())).reduce((sum, o) => sum + (o.price || 0), 0),
+      weekly: serviceOrders.filter(o => o.createdAt && o.createdAt.toDate() > subDays(new Date(), 7)).reduce((sum, o) => sum + (o.price || 0), 0),
+      monthly: serviceOrders.filter(o => o.createdAt && o.createdAt.toDate() > subDays(new Date(), 30)).reduce((sum, o) => sum + (o.price || 0), 0),
+      total: totalServiceRevenue
+    };
+
+    // Repair Specific Stats
+    const repairStats = {
+      daily: repairJobs.filter(j => j.createdAt && isSameDay(j.createdAt.toDate(), new Date())).reduce((sum, j) => sum + (j.finalCost || 0), 0),
+      weekly: repairJobs.filter(j => j.createdAt && j.createdAt.toDate() > subDays(new Date(), 7)).reduce((sum, j) => sum + (j.finalCost || 0), 0),
+      monthly: repairJobs.filter(j => j.createdAt && j.createdAt.toDate() > subDays(new Date(), 30)).reduce((sum, j) => sum + (j.finalCost || 0), 0),
+      total: totalRepairRevenue,
+      profit: totalRepairProfit
+    };
 
     // Top products
     const productSalesMap: Record<string, number> = {};
@@ -90,8 +131,8 @@ export default function Dashboard({ products, sales, serviceOrders, expenses, cu
 
     const topCustomers = [...customers].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 4);
 
-    return { totalRevenue, totalProfit, totalExpenses, netProfit, lowStockCount, totalProducts, totalCustomers, productsAddedToday, last7Days, topProducts, featuredProducts, pendingOrders, completedOrdersToday, topCustomers };
-  }, [products, sales, serviceOrders, expenses, customers]);
+    return { totalRevenue, totalProfit, totalExpenses, netProfit, lowStockCount, totalProducts, totalCustomers, productsAddedToday, last7Days, topProducts, featuredProducts, pendingOrders, completedOrdersToday, topCustomers, repairStats, serviceStats };
+  }, [products, sales, serviceOrders, expenses, customers, repairJobs]);
 
   return (
     <div className="space-y-4" ref={containerRef}>
@@ -163,6 +204,14 @@ export default function Dashboard({ products, sales, serviceOrders, expenses, cu
             trendUp={stats.completedOrdersToday > 0}
             color="indigo"
           />
+          <StatCard
+            title="Service Income"
+            value={`৳${(stats.serviceStats.total + stats.repairStats.total).toLocaleString()}`}
+            icon={<Zap className="text-blue-600" size={16} />}
+            trend={`৳${stats.serviceStats.daily + stats.repairStats.daily} today`}
+            trendUp={(stats.serviceStats.daily + stats.repairStats.daily) > 0}
+            color="blue"
+          />
         </div>
 
         {/* Revenue Chart */}
@@ -180,7 +229,7 @@ export default function Dashboard({ products, sales, serviceOrders, expenses, cu
               </div>
             </div>
           </div>
-          <div className="w-full h-[120px]">
+          <div className="w-full h-[150px] sm:h-[200px]">
             {mounted && (
               <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <AreaChart data={stats.last7Days}>
@@ -201,7 +250,9 @@ export default function Dashboard({ products, sales, serviceOrders, expenses, cu
                   <Tooltip 
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px' }}
                   />
-                  <Area yAxisId="left" type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" name="Revenue" />
+                  <Area yAxisId="left" type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" name="Total Revenue" />
+                  <Area yAxisId="left" type="monotone" dataKey="serviceRevenue" stroke="#0ea5e9" strokeWidth={1} fillOpacity={0.5} fill="url(#colorRevenue)" name="Printing/Service" />
+                  <Area yAxisId="left" type="monotone" dataKey="repairRevenue" stroke="#8b5cf6" strokeWidth={1} fillOpacity={0.3} fill="url(#colorRevenue)" name="Repair Revenue" />
                   <Area yAxisId="right" type="monotone" dataKey="newProducts" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorProducts)" name="New Products" />
                 </AreaChart>
               </ResponsiveContainer>
@@ -359,6 +410,66 @@ export default function Dashboard({ products, sales, serviceOrders, expenses, cu
                 No customer records yet.
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Service Center Breakdown (Printing etc) */}
+        <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm chart-container">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">Printing & Services</h3>
+            <Printer size={14} className="text-indigo-500" />
+          </div>
+          <div className="space-y-3">
+            <div className="p-3 bg-indigo-50 dark:bg-indigo-500/10 rounded-2xl border border-indigo-100 dark:border-indigo-500/20">
+              <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-widest mb-1">Today's Income</p>
+              <h4 className="text-xl font-black text-slate-900 dark:text-white">৳{stats.serviceStats.daily.toLocaleString()}</h4>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="p-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Weekly</p>
+                <p className="text-xs font-black text-slate-900 dark:text-white">৳{stats.serviceStats.weekly.toLocaleString()}</p>
+              </div>
+              <div className="p-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Monthly</p>
+                <p className="text-xs font-black text-slate-900 dark:text-white">৳{stats.serviceStats.monthly.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Total Revenue</p>
+                <p className="text-sm font-black text-emerald-600">৳{stats.serviceStats.total.toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Repair Center Breakdown */}
+        <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm chart-container">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">Repair Income</h3>
+            <Wrench size={14} className="text-blue-500" />
+          </div>
+          <div className="space-y-3">
+            <div className="p-3 bg-blue-50 dark:bg-blue-500/10 rounded-2xl border border-blue-100 dark:border-blue-500/20">
+              <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1">Today's Income</p>
+              <h4 className="text-xl font-black text-slate-900 dark:text-white">৳{stats.repairStats.daily.toLocaleString()}</h4>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="p-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Weekly</p>
+                <p className="text-xs font-black text-slate-900 dark:text-white">৳{stats.repairStats.weekly.toLocaleString()}</p>
+              </div>
+              <div className="p-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Monthly</p>
+                <p className="text-xs font-black text-slate-900 dark:text-white">৳{stats.repairStats.monthly.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Total Earnings</p>
+                <p className="text-sm font-black text-emerald-600">৳{stats.repairStats.profit.toLocaleString()}</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
