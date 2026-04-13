@@ -1518,7 +1518,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
                   </p>
                   
                   {/* Preview Box */}
-                  <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-center w-[151px] h-[113px] overflow-hidden">
+                  <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-center w-[152px] h-[100px] overflow-hidden">
                     <div className="w-full text-center mb-0.5">
                       <p className="text-[10px] font-black text-black uppercase tracking-wider m-0 leading-none">{settings?.shopName || 'SHOP NAME'}</p>
                     </div>
@@ -1528,12 +1528,12 @@ export default function Inventory({ products, settings }: InventoryProps) {
                         {printingProduct.barcode || printingProduct.id.slice(0, 8).toUpperCase()}
                       </p>
                     </div>
-                    <div className="scale-[0.85] origin-center">
+                    <div className="scale-[0.8] origin-center">
                       <BarcodeGenerator 
                         value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
                         format="CODE128"
                         width={1.2} 
-                        height={25} 
+                        height={20} 
                         fontSize={0}
                         margin={0}
                         displayValue={false}
@@ -1556,59 +1556,78 @@ export default function Inventory({ products, settings }: InventoryProps) {
                       return;
                     }
 
-                    const iframe = document.createElement('iframe');
-                    iframe.style.position = 'fixed';
-                    iframe.style.right = '0';
-                    iframe.style.bottom = '0';
-                    iframe.style.width = '0';
-                    iframe.style.height = '0';
-                    iframe.style.border = 'none';
-                    document.body.appendChild(iframe);
-
-                    const printContent = printRef.current.innerHTML;
-                    if (!printContent) {
-                      setError("No content to print.");
+                    // Create a dedicated print window for better driver communication
+                    const printWindow = window.open('', '_blank', 'width=600,height=600');
+                    if (!printWindow) {
+                      setError("Pop-up blocked. Please allow pop-ups to print labels.");
                       return;
                     }
 
-                    const doc = iframe.contentWindow?.document;
-                    if (doc) {
-                      doc.open();
-                      doc.write(`
-                        <html>
-                          <head>
-                            <title>Print Labels</title>
-                            <style>
-                              @page { size: 40mm 30mm; margin: 0; }
-                              body { margin: 0; padding: 0; }
-                              .print-container { display: flex; flex-direction: column; align-items: center; width: 100%; }
-                            </style>
-                          </head>
-                          <body>
-                            <div class="print-container">${printContent}</div>
-                          </body>
-                        </html>
-                      `);
-                      doc.close();
-
-                      const removeIframe = () => {
-                        if (document.body.contains(iframe)) {
-                          document.body.removeChild(iframe);
-                        }
-                      };
-
-                      // Wait for content and barcodes to be ready
-                      setTimeout(() => {
-                        try {
-                          iframe.contentWindow?.focus();
-                          iframe.contentWindow?.print();
-                        } catch (e) {
-                          console.error("Print failed:", e);
-                          setError("Print failed. If you are in the preview, please open the app in a new tab to print.");
-                        }
-                        setTimeout(removeIframe, 1000);
-                      }, 800);
-                    }
+                    const printContent = printRef.current.innerHTML;
+                    
+                    printWindow.document.write(`
+                      <!DOCTYPE html>
+                      <html>
+                        <head>
+                          <title>Print Labels</title>
+                          <style>
+                            @page { 
+                              size: 38mm 25mm; 
+                              margin: 0; 
+                            }
+                            html, body { 
+                              margin: 0; 
+                              padding: 0; 
+                              width: 38mm; 
+                              height: 25mm;
+                              background: white;
+                            }
+                            .print-container { 
+                              display: block;
+                              width: 38mm;
+                            }
+                            .label-page {
+                              width: 38mm;
+                              height: 25mm;
+                              display: flex;
+                              flex-direction: column;
+                              align-items: center;
+                              justify-content: center;
+                              page-break-after: always;
+                              overflow: hidden;
+                              box-sizing: border-box;
+                              padding: 1mm;
+                            }
+                            /* Force black and white for thermal printers */
+                            * {
+                              color: black !important;
+                              -webkit-print-color-adjust: exact;
+                              print-color-adjust: exact;
+                            }
+                          </style>
+                        </head>
+                        <body>
+                          <div class="print-container">${printContent}</div>
+                          <script>
+                            window.onload = function() {
+                              // Small delay to ensure Barcode SVG is fully rendered
+                              setTimeout(function() {
+                                window.print();
+                                // Close window after print dialog is closed
+                                window.onafterprint = function() {
+                                  window.close();
+                                };
+                                // Fallback for browsers that don't support onafterprint
+                                setTimeout(function() {
+                                  // window.close(); // Optional: keep open if user needs to retry
+                                }, 1000);
+                              }, 500);
+                            };
+                          </script>
+                        </body>
+                      </html>
+                    `);
+                    printWindow.document.close();
                   }}
                   className="flex-1 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 dark:shadow-none flex items-center justify-center gap-2"
                 >
@@ -1622,7 +1641,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
           {/* Actual Printable Area (Only visible during print) */}
           <div ref={printRef} className="opacity-0 pointer-events-none absolute -z-50 flex flex-col items-center w-full bg-white">
             {Array.from({ length: printQuantity }).map((_, i) => (
-              <div key={i} className="flex flex-col items-center justify-center text-black w-full" style={{ width: '40mm', height: '30mm', pageBreakAfter: 'always', padding: '2mm', boxSizing: 'border-box' }}>
+              <div key={i} className="label-page">
                 <div className="w-full text-center">
                   <p style={{ fontSize: '10pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0', lineHeight: '1' }}>{settings?.shopName || 'SHOP NAME'}</p>
                 </div>
@@ -1637,7 +1656,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
                     value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
                     format="CODE128"
                     width={1.2} 
-                    height={25} 
+                    height={20} 
                     fontSize={0}
                     margin={0}
                     displayValue={false}

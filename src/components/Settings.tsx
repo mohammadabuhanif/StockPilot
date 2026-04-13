@@ -247,6 +247,33 @@ export default function Settings() {
 
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-3 mb-6">
+          <div className="p-2 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl">
+            <Mail size={24} />
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-slate-900 dark:text-white">Share with Friend</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">How to sync data with your friend's Gmail.</p>
+          </div>
+        </div>
+        
+        <div className="space-y-4">
+          <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+            <ol className="list-decimal list-inside text-xs text-slate-600 dark:text-slate-400 space-y-2">
+              <li>Give your friend the **App URL** or **Vercel URL**.</li>
+              <li>Ask them to **Log in with Google** using their Gmail.</li>
+              <li>Once they log in, their name will appear in the **User Management** section above.</li>
+              <li>Change their role from "Staff" to **"Admin"**.</li>
+              <li>They will now have full access to all your shop data!</li>
+            </ol>
+          </div>
+          <p className="text-[10px] text-slate-500 italic">
+            * Your data is securely synced to your Gmail account ({settings.shopEmail || 'abuhanifindiabased@gmail.com'}). Even if you share the app, you remain the primary owner.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-3 mb-6">
           <div className="p-2 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-xl">
             <Database size={24} />
           </div>
