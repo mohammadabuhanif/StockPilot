@@ -55,7 +55,8 @@ export default function Inventory({ products, settings }: InventoryProps) {
   const [stockHistory, setStockHistory] = useState<StockLog[]>([]);
   const [logToDelete, setLogToDelete] = useState<{logId: string, productId: string} | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'price-low' | 'price-high' | 'stock-low' | 'stock-high' | 'newest'>('newest');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedBrand, setSelectedBrand] = useState<string>('all');
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
@@ -447,28 +448,48 @@ export default function Inventory({ products, settings }: InventoryProps) {
   };
 
   const filteredProducts = useMemo(() => {
-    let result = products.filter(p => 
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (p.barcode && p.barcode.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
+    let result = products.filter(p => {
+      const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (p.brand && p.brand.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (p.barcode && p.barcode.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory;
+      const matchesBrand = selectedBrand === 'all' || p.brand === selectedBrand;
 
-    return result.sort((a, b) => {
-      switch (sortBy) {
-        case 'name-asc': return a.name.localeCompare(b.name);
-        case 'name-desc': return b.name.localeCompare(a.name);
-        case 'price-low': return a.price - b.price;
-        case 'price-high': return b.price - a.price;
-        case 'stock-low': return a.stock - b.stock;
-        case 'stock-high': return b.stock - a.stock;
-        case 'newest': 
-          const dateA = a.createdAt?.toDate().getTime() || 0;
-          const dateB = b.createdAt?.toDate().getTime() || 0;
-          return dateB - dateA;
-        default: return 0;
+      return matchesSearch && matchesCategory && matchesBrand;
+    });
+
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, searchQuery, selectedCategory, selectedBrand]);
+
+  const categories = useMemo(() => {
+    const counts: Record<string, number> = {};
+    products.forEach(p => {
+      if (p.category) {
+        counts[p.category] = (counts[p.category] || 0) + 1;
       }
     });
-  }, [products, searchQuery, sortBy]);
+    const cats = Object.keys(counts).sort();
+    return [
+      { name: 'all', count: products.length },
+      ...cats.map(cat => ({ name: cat, count: counts[cat] }))
+    ];
+  }, [products]);
+
+  const brands = useMemo(() => {
+    const counts: Record<string, number> = {};
+    products.forEach(p => {
+      if (p.brand) {
+        counts[p.brand] = (counts[p.brand] || 0) + 1;
+      }
+    });
+    const brs = Object.keys(counts).sort();
+    return [
+      { name: 'all', count: products.length },
+      ...brs.map(brand => ({ name: brand, count: counts[brand] }))
+    ];
+  }, [products]);
 
   // Group products by creation date
   const productsByDate = products.reduce((acc, product) => {
@@ -598,20 +619,33 @@ export default function Inventory({ products, settings }: InventoryProps) {
             />
           </div>
           
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <div className="relative flex-1 sm:flex-none">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:flex-none min-w-[140px]">
               <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="w-full appearance-none pl-9 pr-8 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white transition-all cursor-pointer font-bold"
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="w-full appearance-none pl-9 pr-8 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white transition-all cursor-pointer font-bold capitalize"
               >
-                <option value="newest">Newest</option>
-                <option value="name-asc">A-Z</option>
-                <option value="name-desc">Z-A</option>
-                <option value="price-low">৳ Low</option>
-                <option value="price-high">৳ High</option>
-                <option value="stock-low">Stock ↑</option>
-                <option value="stock-high">Stock ↓</option>
+                {categories.map(cat => (
+                  <option key={cat.name} value={cat.name}>
+                    {cat.name === 'all' ? `All Categories (${cat.count})` : `${cat.name} (${cat.count})`}
+                  </option>
+                ))}
+              </select>
+              <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+            </div>
+
+            <div className="relative flex-1 sm:flex-none min-w-[140px]">
+              <select
+                value={selectedBrand}
+                onChange={(e) => setSelectedBrand(e.target.value)}
+                className="w-full appearance-none pl-9 pr-8 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white transition-all cursor-pointer font-bold capitalize"
+              >
+                {brands.map(brand => (
+                  <option key={brand.name} value={brand.name}>
+                    {brand.name === 'all' ? `All Brands (${brand.count})` : `${brand.name} (${brand.count})`}
+                  </option>
+                ))}
               </select>
               <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
             </div>
