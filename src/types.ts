@@ -24,6 +24,7 @@ export interface Product {
   notes?: string;
   isFeatured?: boolean;
   barcode?: string;
+  sku?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

@@ -59,7 +59,12 @@ export default function Sales({ products, sales, customers, services, settings }
       const { barcode } = e.detail;
       if (!barcode) return;
       
-      const product = products.find(p => p.barcode?.toLowerCase() === barcode.toLowerCase());
+      const cleanBarcode = barcode.trim().toLowerCase();
+      const product = products.find(p => 
+        (p.barcode && p.barcode.trim().toLowerCase() === cleanBarcode) ||
+        (p.sku && p.sku.trim().toLowerCase() === cleanBarcode) ||
+        (p.id.toLowerCase().includes(cleanBarcode) && cleanBarcode.length >= 5)
+      );
       if (product) {
         addToCart(product);
         setSuccessMessage(`Added ${product.name} to cart`);
@@ -112,9 +117,14 @@ export default function Sales({ products, sales, customers, services, settings }
 
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!barcodeInput.trim()) return;
+    const cleanInput = barcodeInput.trim().toLowerCase();
+    if (!cleanInput) return;
 
-    const product = products.find(p => p.barcode?.toLowerCase() === barcodeInput.toLowerCase());
+    const product = products.find(p => 
+      (p.barcode && p.barcode.trim().toLowerCase() === cleanInput) ||
+      (p.sku && p.sku.trim().toLowerCase() === cleanInput) ||
+      (p.id.toLowerCase().includes(cleanInput) && cleanInput.length >= 5)
+    );
     if (product) {
       addToCart(product);
       setBarcodeInput('');
@@ -128,7 +138,10 @@ export default function Sales({ products, sales, customers, services, settings }
   const filteredProducts = useMemo(() => {
     let result = products.filter(p => {
       const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                           p.category.toLowerCase().includes(searchQuery.toLowerCase());
+                           p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           (p.sku && p.sku.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                           (p.barcode && p.barcode.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                           p.id.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
       return matchesSearch && matchesCategory;
     });

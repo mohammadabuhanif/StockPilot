@@ -145,9 +145,14 @@ export default function Inventory({ products, settings }: InventoryProps) {
   }, [stockInMode, isModalOpen]);
 
   const processBarcodeStockIn = async (code: string) => {
-    if (!code.trim()) return;
+    const cleanCode = code.trim().toLowerCase();
+    if (!cleanCode) return;
 
-    const product = products.find(p => p.barcode?.toLowerCase() === code.toLowerCase());
+    const product = products.find(p => 
+      (p.barcode && p.barcode.trim().toLowerCase() === cleanCode) ||
+      (p.sku && p.sku.trim().toLowerCase() === cleanCode) ||
+      (p.id.toLowerCase().includes(cleanCode) && cleanCode.length >= 5)
+    );
     if (product) {
       try {
         const newStock = product.stock + 1;
@@ -290,6 +295,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
         notes: notes,
         isFeatured: formData.get('isFeatured') === 'on',
         barcode: (formData.get('barcode') as string) || '',
+        sku: (formData.get('sku') as string) || '',
         price: Number(formData.get('price')) || 0,
         cost: Number(formData.get('cost')) || 0,
         stock: Number(formData.get('stock')) || 0,
@@ -476,7 +482,9 @@ export default function Inventory({ products, settings }: InventoryProps) {
       const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (p.brand && p.brand.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (p.barcode && p.barcode.toLowerCase().includes(searchQuery.toLowerCase()));
+        (p.sku && p.sku.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (p.barcode && p.barcode.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        p.id.toLowerCase().includes(searchQuery.toLowerCase());
       
       const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory;
       const matchesBrand = selectedBrand === 'all' || p.brand === selectedBrand;
@@ -1108,40 +1116,100 @@ export default function Inventory({ products, settings }: InventoryProps) {
                     </div>
                     
                     <div className="grid grid-cols-1 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 ml-1">Barcode (Unique ID)</label>
-                        <div className="relative">
-                          <BarcodeIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 ml-1">SKU</label>
                           <input
-                            name="barcode"
-                            defaultValue={editingProduct?.barcode || prefilledBarcode}
-                            className="w-full pl-9 pr-20 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all font-mono"
-                            placeholder="Scan or enter..."
+                            name="sku"
+                            defaultValue={editingProduct?.sku}
+                            className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all font-mono"
+                            placeholder="e.g. ADC-25W-001"
                           />
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              const form = (e.currentTarget.closest('form') as HTMLFormElement);
-                              const name = (form.querySelector('[name="name"]') as HTMLInputElement).value;
-                              const brand = (form.querySelector('[name="brand"]') as HTMLInputElement).value;
-                              const input = e.currentTarget.previousElementSibling as HTMLInputElement;
-                              
-                              let sku = '';
-                              if (brand && name) {
-                                const brandPart = brand.substring(0, 3).toUpperCase();
-                                const namePart = name.substring(0, 3).toUpperCase();
-                                const randomPart = Math.random().toString(36).substring(2, 6).toUpperCase();
-                                sku = `${brandPart}-${namePart}-${randomPart}`;
-                              } else {
-                                sku = Math.random().toString(36).substring(2, 10).toUpperCase();
-                              }
-                              input.value = sku;
-                            }}
-                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-black text-indigo-600 hover:text-indigo-700 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-1 rounded-lg uppercase tracking-tighter"
-                          >
-                            Generate SKU
-                          </button>
                         </div>
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 ml-1">Barcode (12 Digits)</label>
+                          <div className="relative">
+                            <BarcodeIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                            <input
+                              name="barcode"
+                              id="barcode-input"
+                              defaultValue={editingProduct?.barcode || prefilledBarcode}
+                              className="w-full pl-9 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all font-mono"
+                              placeholder="Scan or enter..."
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            const form = (e.currentTarget.closest('form') as HTMLFormElement);
+                            const name = (form.querySelector('[name="name"]') as HTMLInputElement).value;
+                            const category = (form.querySelector('[name="category"]') as HTMLInputElement).value || '';
+                            
+                            let catCode = 'GEN';
+                            const catLower = category.toLowerCase();
+                            if (catLower.includes('adapter')) catCode = 'ADC';
+                            else if (catLower.includes('cable')) catCode = 'CBL';
+                            else if (catLower.includes('mouse')) catCode = 'MSE';
+                            else if (catLower.includes('keyboard')) catCode = 'KBD';
+                            else if (catLower.includes('router')) catCode = 'RTR';
+                            
+                            const shortName = name ? name.split(' ')[0].substring(0, 3).toUpperCase() : 'PRD';
+                            const random3 = Math.floor(Math.random() * 900) + 100;
+                            const sku = `${catCode}-${shortName}-${random3}`;
+                            
+                            const random12 = Math.floor(Math.random() * 900000000000) + 100000000000;
+                            const barcode = random12.toString();
+                            
+                            (form.querySelector('[name="sku"]') as HTMLInputElement).value = sku;
+                            (form.querySelector('[name="barcode"]') as HTMLInputElement).value = barcode;
+                          }}
+                          className="flex-1 py-2 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all"
+                        >
+                          Generate SKU & Barcode
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            const input = document.getElementById('barcode-input') as HTMLInputElement;
+                            const barcode = input.value;
+                            if (!barcode) {
+                              setError("Please enter a barcode first to fetch data.");
+                              return;
+                            }
+                            try {
+                              setLoading(true);
+                              setError(null);
+                              const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+                              const data = await res.json();
+                              if (data.status === 1 && data.product) {
+                                const form = (e.currentTarget.closest('form') as HTMLFormElement);
+                                const nameInput = form.querySelector('[name="name"]') as HTMLInputElement;
+                                const brandInput = form.querySelector('[name="brand"]') as HTMLInputElement;
+                                
+                                if (data.product.product_name && !nameInput.value) {
+                                  nameInput.value = data.product.product_name;
+                                }
+                                if (data.product.brands && !brandInput.value) {
+                                  brandInput.value = data.product.brands.split(',')[0];
+                                }
+                                setSuccessMessage("Product data fetched successfully!");
+                                setTimeout(() => setSuccessMessage(null), 3000);
+                              } else {
+                                setError("Product not found in online database.");
+                              }
+                            } catch (err) {
+                              setError("Failed to fetch product data online.");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all"
+                        >
+                          Fetch Info from Barcode
+                        </button>
                       </div>
 
                       <div className="grid grid-cols-3 gap-3">
@@ -1576,25 +1644,20 @@ export default function Inventory({ products, settings }: InventoryProps) {
                   </p>
                   
                   {/* Preview Box */}
-                  <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-around w-[152px] h-[100px] overflow-hidden">
-                    <div className="w-full text-center mb-0.5">
-                      <p className="text-[8px] font-black text-black uppercase tracking-wider m-0 leading-none">{settings?.shopName || 'SHOP NAME'}</p>
+                  <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-center w-[152px] h-[112px] overflow-hidden">
+                    <div className="w-full text-center flex flex-col items-center justify-center">
+                      <p className="text-[9px] font-black text-black uppercase tracking-wider m-0 leading-none">{settings?.shopName || 'SMART DIGITAL CARE'}</p>
+                      <p className="text-[11px] font-black text-black uppercase truncate w-full m-0 mt-1 leading-tight">{printingProduct.name}</p>
                     </div>
-                    <div className="w-full text-center my-0.5">
-                      <p className="text-[6px] font-black text-slate-700 uppercase truncate w-full m-0 leading-tight">{printingProduct.name}</p>
-                      <p className="text-[8px] font-black text-black uppercase tracking-widest m-0 mt-0.5 leading-none">
-                        {printingProduct.barcode || printingProduct.id.slice(0, 8).toUpperCase()}
-                      </p>
-                    </div>
-                    <div className="scale-[0.7] origin-center">
+                    <div className="scale-[0.8] origin-top mt-1">
                       <BarcodeGenerator 
-                        value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
+                        value={printingProduct.barcode || printingProduct.sku || printingProduct.id.slice(0, 8).toUpperCase()} 
                         format="CODE128"
-                        width={1.1} 
-                        height={18} 
-                        fontSize={0}
+                        width={1.2} 
+                        height={25} 
+                        fontSize={12}
                         margin={0}
-                        displayValue={false}
+                        displayValue={true}
                       />
                     </div>
                   </div>
@@ -1614,15 +1677,14 @@ export default function Inventory({ products, settings }: InventoryProps) {
                       return;
                     }
 
-                    // Create a dedicated print window for better driver communication
+                    const printContent = printRef.current.innerHTML;
+                    
                     const printWindow = window.open('', '_blank', 'width=600,height=600');
                     if (!printWindow) {
                       setError("Pop-up blocked. Please allow pop-ups to print labels.");
                       return;
                     }
 
-                    const printContent = printRef.current.innerHTML;
-                    
                     printWindow.document.write(`
                       <!DOCTYPE html>
                       <html>
@@ -1630,14 +1692,14 @@ export default function Inventory({ products, settings }: InventoryProps) {
                           <title>Print Labels</title>
                           <style>
                             @page { 
-                              size: 38mm 25mm; 
+                              size: 38mm 28mm; 
                               margin: 0; 
                             }
                             html, body { 
                               margin: 0; 
                               padding: 0; 
                               width: 38mm; 
-                              height: 25mm;
+                              height: 28mm;
                               background: white;
                             }
                             .print-container { 
@@ -1646,11 +1708,11 @@ export default function Inventory({ products, settings }: InventoryProps) {
                             }
                             .label-page {
                               width: 38mm;
-                              height: 25mm;
+                              height: 28mm;
                               display: flex;
                               flex-direction: column;
                               align-items: center;
-                              justify-content: space-around;
+                              justify-content: center;
                               page-break-after: always;
                               overflow: hidden;
                               box-sizing: border-box;
@@ -1668,17 +1730,11 @@ export default function Inventory({ products, settings }: InventoryProps) {
                           <div class="print-container">${printContent}</div>
                           <script>
                             window.onload = function() {
-                              // Small delay to ensure Barcode SVG is fully rendered
                               setTimeout(function() {
                                 window.print();
-                                // Close window after print dialog is closed
                                 window.onafterprint = function() {
                                   window.close();
                                 };
-                                // Fallback for browsers that don't support onafterprint
-                                setTimeout(function() {
-                                  // window.close(); // Optional: keep open if user needs to retry
-                                }, 1000);
                               }, 500);
                             };
                           </script>
@@ -1701,23 +1757,20 @@ export default function Inventory({ products, settings }: InventoryProps) {
             {Array.from({ length: printQuantity }).map((_, i) => (
               <div key={i} className="label-page">
                 <div className="w-full text-center">
-                  <p style={{ fontSize: '8pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0', lineHeight: '1' }}>{settings?.shopName || 'SHOP NAME'}</p>
+                  <p style={{ fontSize: '7pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0', lineHeight: '1' }}>{settings?.shopName || 'SMART DIGITAL CARE'}</p>
                 </div>
                 <div className="w-full text-center" style={{ margin: '1mm 0' }}>
-                  <p style={{ fontSize: '6pt', fontWeight: '900', textTransform: 'uppercase', margin: '0', lineHeight: '1.1', textAlign: 'center' }}>{printingProduct.name}</p>
-                  <p style={{ fontSize: '8pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0.5mm 0 0 0', lineHeight: '1' }}>
-                    {printingProduct.barcode || printingProduct.id.slice(0, 8).toUpperCase()}
-                  </p>
+                  <p style={{ fontSize: '9pt', fontWeight: '900', textTransform: 'uppercase', margin: '0', lineHeight: '1.1', textAlign: 'center' }}>{printingProduct.name}</p>
                 </div>
-                <div style={{ transform: 'scale(0.9)', transformOrigin: 'center' }}>
+                <div style={{ transform: 'scale(0.8)', transformOrigin: 'top center' }}>
                   <BarcodeGenerator 
-                    value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
+                    value={printingProduct.barcode || printingProduct.sku || printingProduct.id.slice(0, 8).toUpperCase()} 
                     format="CODE128"
-                    width={1.1} 
-                    height={18} 
-                    fontSize={0}
+                    width={1.2} 
+                    height={25} 
+                    fontSize={12}
                     margin={0}
-                    displayValue={false}
+                    displayValue={true}
                   />
                 </div>
               </div>

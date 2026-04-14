@@ -71,9 +71,9 @@ export default function App() {
       const activeElement = document.activeElement;
       const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
       
-      // Barcode scanners are very fast. If the time between keys is > 50ms, it's likely manual typing.
+      // Barcode scanners are very fast. If the time between keys is > 150ms, it's likely manual typing.
       const currentTime = Date.now();
-      if (currentTime - lastKeyTime.current > 50) {
+      if (currentTime - lastKeyTime.current > 150) {
         barcodeBuffer.current = '';
       }
       lastKeyTime.current = currentTime;
