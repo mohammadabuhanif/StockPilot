@@ -57,8 +57,61 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [loading, setLoading] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
+  const barcodeBuffer = useRef<string>('');
+  const lastKeyTime = useRef<number>(0);
 
   const isShopRoute = window.location.hash === '#/shop';
+
+  // Global Barcode Listener
+  useEffect(() => {
+    if (!user || isShopRoute || isLocked) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input field (unless it's the barcode input itself)
+      const activeElement = document.activeElement;
+      const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+      
+      // Barcode scanners are very fast. If the time between keys is > 50ms, it's likely manual typing.
+      const currentTime = Date.now();
+      if (currentTime - lastKeyTime.current > 50) {
+        barcodeBuffer.current = '';
+      }
+      lastKeyTime.current = currentTime;
+
+      if (e.key === 'Enter') {
+        if (barcodeBuffer.current.length >= 3) {
+          e.preventDefault();
+          const scannedBarcode = barcodeBuffer.current;
+          barcodeBuffer.current = '';
+          
+          console.log('Global Barcode Detected:', scannedBarcode);
+
+          // Logic: 
+          // 1. If we are on any tab other than inventory/sales, switch to sales
+          // 2. Dispatch a custom event so the active tab can handle it
+          if (activeTab !== 'sales' && activeTab !== 'inventory') {
+            setActiveTab('sales');
+          }
+
+          // Small delay to ensure tab switch completes before dispatching
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('barcodeScanned', { 
+              detail: { barcode: scannedBarcode, source: 'global' } 
+            }));
+          }, 50);
+        }
+        barcodeBuffer.current = '';
+      } else if (e.key.length === 1) {
+        // Only accumulate alphanumeric characters to avoid control keys
+        if (/[a-zA-Z0-9-]/.test(e.key)) {
+          barcodeBuffer.current += e.key;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [user, isShopRoute, isLocked, activeTab]);
 
   useEffect(() => {
     if (isDarkMode) {

@@ -144,11 +144,10 @@ export default function Inventory({ products, settings }: InventoryProps) {
     return () => clearInterval(focusInterval);
   }, [stockInMode, isModalOpen]);
 
-  const handleBarcodeStockIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!barcodeInput.trim()) return;
+  const processBarcodeStockIn = async (code: string) => {
+    if (!code.trim()) return;
 
-    const product = products.find(p => p.barcode?.toLowerCase() === barcodeInput.toLowerCase());
+    const product = products.find(p => p.barcode?.toLowerCase() === code.toLowerCase());
     if (product) {
       try {
         const newStock = product.stock + 1;
@@ -173,15 +172,40 @@ export default function Inventory({ products, settings }: InventoryProps) {
         handleFirestoreError(err, OperationType.UPDATE, `products/${product.id}`);
       }
     } else {
-      if (window.confirm(`Product with barcode "${barcodeInput}" not found. Would you like to add it now?`)) {
+      if (window.confirm(`Product with barcode "${code}" not found. Would you like to add it now?`)) {
         setEditingProduct(null);
         setImageUrlInput('');
-        setPrefilledBarcode(barcodeInput);
+        setPrefilledBarcode(code);
         setIsModalOpen(true);
       }
       setBarcodeInput('');
     }
   };
+
+  const handleBarcodeStockIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    processBarcodeStockIn(barcodeInput);
+  };
+
+  // Global Barcode Listener for Inventory
+  useEffect(() => {
+    const handleGlobalBarcode = (e: any) => {
+      const { barcode } = e.detail;
+      if (!barcode) return;
+
+      if (stockInMode) {
+        processBarcodeStockIn(barcode);
+      } else {
+        // If not in stock in mode, just search for it
+        setSearchQuery(barcode);
+        setSuccessMessage(`Searching for barcode: ${barcode}`);
+        setTimeout(() => setSuccessMessage(null), 2000);
+      }
+    };
+
+    window.addEventListener('barcodeScanned', handleGlobalBarcode);
+    return () => window.removeEventListener('barcodeScanned', handleGlobalBarcode);
+  }, [products, stockInMode]);
 
   const handleQuickStockUpdate = async (product: Product, amount: number) => {
     try {
@@ -1552,22 +1576,22 @@ export default function Inventory({ products, settings }: InventoryProps) {
                   </p>
                   
                   {/* Preview Box */}
-                  <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-center w-[152px] h-[100px] overflow-hidden">
+                  <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-around w-[152px] h-[100px] overflow-hidden">
                     <div className="w-full text-center mb-0.5">
-                      <p className="text-[10px] font-black text-black uppercase tracking-wider m-0 leading-none">{settings?.shopName || 'SHOP NAME'}</p>
+                      <p className="text-[8px] font-black text-black uppercase tracking-wider m-0 leading-none">{settings?.shopName || 'SHOP NAME'}</p>
                     </div>
-                    <div className="w-full text-center my-1">
-                      <p className="text-[8px] font-black text-slate-700 uppercase truncate w-full m-0 leading-tight">{printingProduct.name}</p>
-                      <p className="text-[10px] font-black text-black uppercase tracking-widest m-0 mt-0.5 leading-none">
+                    <div className="w-full text-center my-0.5">
+                      <p className="text-[6px] font-black text-slate-700 uppercase truncate w-full m-0 leading-tight">{printingProduct.name}</p>
+                      <p className="text-[8px] font-black text-black uppercase tracking-widest m-0 mt-0.5 leading-none">
                         {printingProduct.barcode || printingProduct.id.slice(0, 8).toUpperCase()}
                       </p>
                     </div>
-                    <div className="scale-[0.8] origin-center">
+                    <div className="scale-[0.7] origin-center">
                       <BarcodeGenerator 
                         value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
                         format="CODE128"
-                        width={1.2} 
-                        height={20} 
+                        width={1.1} 
+                        height={18} 
                         fontSize={0}
                         margin={0}
                         displayValue={false}
@@ -1626,11 +1650,11 @@ export default function Inventory({ products, settings }: InventoryProps) {
                               display: flex;
                               flex-direction: column;
                               align-items: center;
-                              justify-content: center;
+                              justify-content: space-around;
                               page-break-after: always;
                               overflow: hidden;
                               box-sizing: border-box;
-                              padding: 1mm;
+                              padding: 1.5mm;
                             }
                             /* Force black and white for thermal printers */
                             * {
@@ -1677,20 +1701,20 @@ export default function Inventory({ products, settings }: InventoryProps) {
             {Array.from({ length: printQuantity }).map((_, i) => (
               <div key={i} className="label-page">
                 <div className="w-full text-center">
-                  <p style={{ fontSize: '10pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0', lineHeight: '1' }}>{settings?.shopName || 'SHOP NAME'}</p>
+                  <p style={{ fontSize: '8pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0', lineHeight: '1' }}>{settings?.shopName || 'SHOP NAME'}</p>
                 </div>
-                <div className="w-full text-center" style={{ margin: '1.5mm 0' }}>
-                  <p style={{ fontSize: '7pt', fontWeight: '900', textTransform: 'uppercase', margin: '0', lineHeight: '1.1', textAlign: 'center' }}>{printingProduct.name}</p>
-                  <p style={{ fontSize: '10pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '1mm 0 0 0', lineHeight: '1' }}>
+                <div className="w-full text-center" style={{ margin: '1mm 0' }}>
+                  <p style={{ fontSize: '6pt', fontWeight: '900', textTransform: 'uppercase', margin: '0', lineHeight: '1.1', textAlign: 'center' }}>{printingProduct.name}</p>
+                  <p style={{ fontSize: '8pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0.5mm 0 0 0', lineHeight: '1' }}>
                     {printingProduct.barcode || printingProduct.id.slice(0, 8).toUpperCase()}
                   </p>
                 </div>
-                <div style={{ transform: 'scale(1.1)', transformOrigin: 'center' }}>
+                <div style={{ transform: 'scale(0.9)', transformOrigin: 'center' }}>
                   <BarcodeGenerator 
                     value={printingProduct.barcode || printingProduct.id.slice(0, 8)} 
                     format="CODE128"
-                    width={1.2} 
-                    height={20} 
+                    width={1.1} 
+                    height={18} 
                     fontSize={0}
                     margin={0}
                     displayValue={false}

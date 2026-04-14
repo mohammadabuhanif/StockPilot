@@ -32,6 +32,7 @@ export default function Sales({ products, sales, customers, services, settings }
   const [error, setError] = useState<string | null>(null);
   const [showPrintMessage, setShowPrintMessage] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -51,6 +52,31 @@ export default function Sales({ products, sales, customers, services, settings }
   } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+
+  // Global Barcode Listener
+  useEffect(() => {
+    const handleGlobalBarcode = (e: any) => {
+      const { barcode } = e.detail;
+      if (!barcode) return;
+      
+      const product = products.find(p => p.barcode?.toLowerCase() === barcode.toLowerCase());
+      if (product) {
+        addToCart(product);
+        setSuccessMessage(`Added ${product.name} to cart`);
+        setTimeout(() => setSuccessMessage(null), 2000);
+        // If mobile cart is closed, open it to show the item was added
+        if (window.innerWidth < 768) {
+          setIsMobileCartOpen(true);
+        }
+      } else {
+        setError(`Product with barcode "${barcode}" not found`);
+        setTimeout(() => setError(null), 3000);
+      }
+    };
+
+    window.addEventListener('barcodeScanned', handleGlobalBarcode);
+    return () => window.removeEventListener('barcodeScanned', handleGlobalBarcode);
+  }, [products]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -462,7 +488,26 @@ export default function Sales({ products, sales, customers, services, settings }
       <div className="flex flex-col lg:flex-row gap-2 flex-1 min-h-0 relative">
       
       {/* Left Side: Product Grid */}
-      <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden relative">
+        {/* Success/Error Toast */}
+        <AnimatePresence>
+          {(successMessage || error) && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-xl shadow-lg flex items-center gap-2 font-bold text-sm"
+              style={{ 
+                backgroundColor: successMessage ? '#10b981' : '#ef4444',
+                color: 'white'
+              }}
+            >
+              {successMessage ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+              {successMessage || error}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Barcode Listener (Hidden) */}
         <form onSubmit={handleBarcodeSubmit} className="sr-only">
           <input
