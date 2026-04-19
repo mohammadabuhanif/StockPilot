@@ -8,21 +8,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { auth, signInWithPopup, googleProvider, signOut, onSnapshot, collection, db, query, orderBy, limit, handleFirestoreError, OperationType, getDocs, getDoc, setDoc, addDoc, doc, serverTimestamp, where } from './firebase';
 import { User } from 'firebase/auth';
-import { LayoutDashboard, Package, ShoppingCart, LogOut, AlertTriangle, TrendingUp, DollarSign, PackagePlus, X, Store, Menu, Moon, Sun, Heart, Zap, CloudCheck, Users, Receipt, Wrench } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, LogOut, AlertTriangle, TrendingUp, DollarSign, PackagePlus, X, Store, Menu, Moon, Sun, Heart, Zap, CloudCheck, Users, Receipt, Wrench, FileText } from 'lucide-react';
 import { cn } from './lib/utils';
-import Dashboard from './components/Dashboard';
-import Inventory from './components/Inventory';
-import Sales from './components/Sales';
-import PersonalCenter from './components/PersonalCenter';
-import ServiceCenter from './components/ServiceCenter';
-import Expenses from './components/Expenses';
-import Customers from './components/Customers';
-import Storefront from './components/Storefront';
-import Settings from './components/Settings';
-import FixerSpace from './components/FixerSpace';
 import PinLock from './components/PinLock';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Logo } from './components/Logo';
@@ -31,7 +21,29 @@ import { Product, Sale, ServiceOrder, Expense, Customer, Service, Settings as Se
 import gsap from 'gsap';
 import { motion, AnimatePresence } from 'motion/react';
 
-type Tab = 'dashboard' | 'inventory' | 'sales' | 'services' | 'expenses' | 'customers' | 'personal' | 'settings' | 'fixer';
+// Lazy load heavy components
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const Inventory = lazy(() => import('./components/Inventory'));
+const Sales = lazy(() => import('./components/Sales'));
+const PersonalCenter = lazy(() => import('./components/PersonalCenter'));
+const ServiceCenter = lazy(() => import('./components/ServiceCenter'));
+const Expenses = lazy(() => import('./components/Expenses'));
+const Customers = lazy(() => import('./components/Customers'));
+const Storefront = lazy(() => import('./components/Storefront'));
+const Settings = lazy(() => import('./components/Settings'));
+const FixerSpace = lazy(() => import('./components/FixerSpace'));
+const Reports = lazy(() => import('./components/Reports'));
+
+type Tab = 'dashboard' | 'inventory' | 'sales' | 'services' | 'expenses' | 'customers' | 'personal' | 'settings' | 'fixer' | 'reports';
+
+// Track which tabs have been visited
+function useVisitedTabs(activeTab: Tab) {
+  const [visited, setVisited] = useState<Record<string, boolean>>({ [activeTab]: true });
+  useEffect(() => {
+    setVisited((prev) => ({ ...prev, [activeTab]: true }));
+  }, [activeTab]);
+  return visited;
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -39,6 +51,7 @@ export default function App() {
   const [userRole, setUserRole] = useState<UserRole>('staff');
   const [isLocked, setIsLocked] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const visitedTabs = useVisitedTabs(activeTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -60,7 +73,38 @@ export default function App() {
   const barcodeBuffer = useRef<string>('');
   const lastKeyTime = useRef<number>(0);
 
-  const isShopRoute = window.location.hash === '#/shop';
+  const [currentHash, setCurrentHash] = useState(window.location.hash);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setCurrentHash(window.location.hash);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const isShopRoute = currentHash === '' || currentHash === '#/' || currentHash.startsWith('#/shop');
+  const isAdminRoute = currentHash.startsWith('#/admin');
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error: any) {
+      if (error.code === 'auth/cancelled-popup-request') {
+        console.log('Login cancelled by user');
+        return;
+      }
+      console.error('Login failed:', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
 
   // Global Barcode Listener
   useEffect(() => {
@@ -218,7 +262,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user || isShopRoute) return; // Don't fetch all data if on public shop route
+    if (!user || !isAdminRoute) return; // Don't fetch all data if not on admin route or not logged in
 
     const unsubscribers: (() => void)[] = [];
 
@@ -251,14 +295,14 @@ export default function App() {
         handleFirestoreError(err, OperationType.GET, 'products');
       }));
 
-      unsubscribers.push(onSnapshot(query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(100)), (snapshot) => {
+      unsubscribers.push(onSnapshot(query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(50)), (snapshot) => {
         const salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
         setSales(salesData);
       }, (err) => {
         handleFirestoreError(err, OperationType.GET, 'sales');
       }));
 
-      unsubscribers.push(onSnapshot(query(collection(db, 'serviceOrders'), orderBy('createdAt', 'desc'), limit(50)), (snapshot) => {
+      unsubscribers.push(onSnapshot(query(collection(db, 'serviceOrders'), orderBy('createdAt', 'desc'), limit(30)), (snapshot) => {
         const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceOrder));
         setServiceOrders(ordersData);
       }, (err) => {
@@ -272,21 +316,21 @@ export default function App() {
         handleFirestoreError(err, OperationType.GET, 'services');
       }));
 
-      unsubscribers.push(onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(100)), (snapshot) => {
+      unsubscribers.push(onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(50)), (snapshot) => {
         const expensesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense));
         setExpenses(expensesData);
       }, (err) => {
         handleFirestoreError(err, OperationType.GET, 'expenses');
       }));
 
-      unsubscribers.push(onSnapshot(query(collection(db, 'customers'), orderBy('totalSpent', 'desc'), limit(100)), (snapshot) => {
+      unsubscribers.push(onSnapshot(query(collection(db, 'customers'), orderBy('totalSpent', 'desc'), limit(50)), (snapshot) => {
         const customersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
         setCustomers(customersData);
       }, (err) => {
         handleFirestoreError(err, OperationType.GET, 'customers');
       }));
 
-      unsubscribers.push(onSnapshot(query(collection(db, 'repairJobs'), orderBy('createdAt', 'desc'), limit(100)), (snapshot) => {
+      unsubscribers.push(onSnapshot(query(collection(db, 'repairJobs'), orderBy('createdAt', 'desc'), limit(50)), (snapshot) => {
         const jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RepairJob));
         setRepairJobs(jobsData);
       }, (err) => {
@@ -307,30 +351,6 @@ export default function App() {
     };
   }, [user, isShopRoute, userRole]);
 
-  if (isShopRoute) {
-    return <Storefront />;
-  }
-
-  const handleLogin = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      if (error.code === 'auth/cancelled-popup-request') {
-        console.log('Login cancelled by user');
-        return;
-      }
-      console.error('Login failed:', error);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error('Logout failed:', error);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -339,29 +359,78 @@ export default function App() {
     );
   }
 
+  if (isShopRoute && !isAdminRoute) {
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-600"></div></div>}>
+          <Storefront user={user} />
+        </Suspense>
+      </ErrorBoundary>
+    );
+  }
+
   if (!user) {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 transition-colors duration-200">
-        <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800 p-8 text-center space-y-6">
-          <div className="bg-indigo-600 text-white w-20 h-20 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-indigo-200 dark:shadow-indigo-900/20">
-            <Logo className="w-12 h-12" />
-          </div>
-          <div className="space-y-2">
-            <h1 className="text-3xl font-bold text-slate-900 dark:text-white">StockPilot</h1>
-            <p className="text-slate-500 dark:text-slate-400">Modern Inventory Management for Small Shops</p>
-            {/* Sync trigger */}
-          </div>
-          <button
-            onClick={handleLogin}
-            className="w-full bg-slate-900 dark:bg-indigo-600 hover:bg-slate-800 dark:hover:bg-indigo-700 text-white font-semibold py-3.5 px-6 rounded-xl transition-all duration-200 flex items-center justify-center gap-3 shadow-lg"
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 bg-white rounded-full p-0.5" alt="Google" />
-            Sign in with Google
-          </button>
-          <p className="text-xs text-slate-400 dark:text-slate-500">
-            Secure real-time management powered by Firebase
-          </p>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 transition-colors duration-200 relative overflow-hidden">
+        {/* Digital Background */}
+        <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+          <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-indigo-500/10 dark:bg-indigo-500/5 rounded-full blur-[120px]"></div>
+          <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-blue-500/10 dark:bg-blue-500/5 rounded-full blur-[120px]"></div>
+          <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.05] bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:32px_32px]"></div>
         </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className="max-w-md w-full bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-slate-100 dark:border-slate-800 p-10 text-center space-y-8 relative z-10"
+        >
+          <div className="space-y-4">
+            <motion.div 
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
+              className="bg-indigo-600 text-white w-24 h-24 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-indigo-500/30 dark:shadow-indigo-900/20"
+            >
+              <Logo className="w-14 h-14" />
+            </motion.div>
+            <div className="space-y-2">
+              <h1 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight">StockPilot</h1>
+              <p className="text-slate-500 dark:text-slate-400 font-medium">Modern Inventory Management for Small Shops</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <button
+              onClick={handleLogin}
+              className="w-full bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-600 dark:hover:bg-indigo-500 text-white font-black py-4 px-6 rounded-2xl transition-all duration-300 flex items-center justify-center gap-3 shadow-xl shadow-slate-200 dark:shadow-indigo-900/20 group"
+            >
+              <div className="bg-white rounded-full p-1 group-hover:scale-110 transition-transform">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+              </div>
+              Sign in with Google
+            </button>
+            
+            <a 
+              href="#/" 
+              className="w-full bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 font-black py-4 px-6 rounded-2xl transition-all duration-300 flex items-center justify-center gap-3 hover:bg-slate-50 dark:hover:bg-slate-700"
+            >
+              <Store size={20} className="text-indigo-600 dark:text-indigo-400" />
+              Visit Public Shop
+            </a>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+            <p className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+              <CloudCheck size={14} className="text-emerald-500" />
+              Secure Cloud Sync Active
+            </p>
+          </div>
+        </motion.div>
+
+        <p className="mt-8 text-slate-400 dark:text-slate-600 text-xs font-bold uppercase tracking-[0.2em] relative z-10">
+          © {new Date().getFullYear()} Smart Digital Care
+        </p>
       </div>
     );
   }
@@ -457,20 +526,26 @@ export default function App() {
           />
           
           {userRole === 'admin' && (
-            <NavItem
-              icon={<LayoutDashboard size={20} />}
-              label="Settings"
-              active={activeTab === 'settings'}
-              onClick={() => setActiveTab('settings')}
-            />
+            <>
+              <NavItem
+                icon={<FileText size={20} />}
+                label="Reports"
+                active={activeTab === 'reports'}
+                onClick={() => setActiveTab('reports')}
+              />
+              <NavItem
+                icon={<Receipt size={20} />}
+                label="Settings"
+                active={activeTab === 'settings'}
+                onClick={() => setActiveTab('settings')}
+              />
+            </>
           )}
           <div className="pt-4 pb-2">
             <p className="px-4 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Public</p>
           </div>
           <a
-            href="/#/shop"
-            target="_blank"
-            rel="noopener noreferrer"
+            href="#/"
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all duration-200"
           >
             <Store size={20} />
@@ -544,15 +619,39 @@ export default function App() {
 
           <div className={cn(activeTab !== 'personal' && "space-y-4")} ref={contentRef}>
             <ErrorBoundary>
-              {activeTab === 'dashboard' && userRole === 'admin' && <Dashboard products={products} sales={sales} serviceOrders={serviceOrders} expenses={expenses} customers={customers} repairJobs={repairJobs} />}
-              {activeTab === 'inventory' && userRole === 'admin' && <Inventory products={products} settings={settings} />}
-              {activeTab === 'sales' && userRole === 'admin' && <Sales products={products} sales={sales} customers={customers} services={services} settings={settings} />}
-              {activeTab === 'services' && userRole === 'admin' && <ServiceCenter />}
-              {activeTab === 'expenses' && userRole === 'admin' && <Expenses />}
-              {activeTab === 'customers' && userRole === 'admin' && <Customers />}
-              {activeTab === 'personal' && <PersonalCenter products={products} sales={sales} appUser={appUser} />}
-              {activeTab === 'settings' && userRole === 'admin' && <Settings />}
-              {activeTab === 'fixer' && (userRole === 'admin' || userRole === 'fixer') && <FixerSpace userRole={userRole} />}
+              <Suspense fallback={<div className="flex justify-center items-center py-12"><div className="w-8 h-8 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin"></div></div>}>
+                {/* CSS Display toggles replacing conditional mounting to make tab switching instant */}
+                <div className={activeTab === 'dashboard' ? 'block' : 'hidden'}>
+                  {visitedTabs['dashboard'] && userRole === 'admin' && <Dashboard products={products} sales={sales} serviceOrders={serviceOrders} expenses={expenses} customers={customers} repairJobs={repairJobs} />}
+                </div>
+                <div className={activeTab === 'inventory' ? 'block' : 'hidden'}>
+                  {visitedTabs['inventory'] && userRole === 'admin' && <Inventory products={products} settings={settings} />}
+                </div>
+                <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
+                  {visitedTabs['sales'] && userRole === 'admin' && <Sales products={products} sales={sales} customers={customers} services={services} settings={settings} />}
+                </div>
+                <div className={activeTab === 'services' ? 'block' : 'hidden'}>
+                  {visitedTabs['services'] && userRole === 'admin' && <ServiceCenter settings={settings} />}
+                </div>
+                <div className={activeTab === 'expenses' ? 'block' : 'hidden'}>
+                  {visitedTabs['expenses'] && userRole === 'admin' && <Expenses />}
+                </div>
+                <div className={activeTab === 'customers' ? 'block' : 'hidden'}>
+                  {visitedTabs['customers'] && userRole === 'admin' && <Customers />}
+                </div>
+                <div className={activeTab === 'personal' ? 'block' : 'hidden'}>
+                  {visitedTabs['personal'] && <PersonalCenter products={products} sales={sales} appUser={appUser} />}
+                </div>
+                <div className={activeTab === 'settings' ? 'block' : 'hidden'}>
+                  {visitedTabs['settings'] && userRole === 'admin' && <Settings />}
+                </div>
+                <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
+                  {visitedTabs['reports'] && userRole === 'admin' && <Reports products={products} sales={sales} serviceOrders={serviceOrders} expenses={expenses} customers={customers} settings={settings} />}
+                </div>
+                <div className={activeTab === 'fixer' ? 'block' : 'hidden'}>
+                  {visitedTabs['fixer'] && (userRole === 'admin' || userRole === 'fixer') && <FixerSpace userRole={userRole} />}
+                </div>
+              </Suspense>
             </ErrorBoundary>
           </div>
         </div>
@@ -569,7 +668,7 @@ export default function App() {
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 flex justify-around items-center p-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] z-40 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)]">
         {userRole === 'admin' ? (
           <>
-            <MobileNavItem icon={<LayoutDashboard size={20} />} label="Home" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+            <MobileNavItem icon={<LayoutDashboard size={20} />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
             <MobileNavItem icon={<Package size={20} />} label="Stock" active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} badge={lowStockProducts.length > 0 ? lowStockProducts.length : undefined} />
             <MobileNavItem icon={<ShoppingCart size={20} />} label="POS" active={activeTab === 'sales'} onClick={() => setActiveTab('sales')} />
             <MobileNavItem icon={<Zap size={20} />} label="Services" active={activeTab === 'services'} onClick={() => setActiveTab('services')} />
@@ -600,6 +699,7 @@ export default function App() {
             <div className="grid grid-cols-3 gap-3 mb-8">
               {userRole === 'admin' && (
                 <>
+                  <MenuButton icon={<FileText size={22} />} label="Reports" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsMobileMenuOpen(false); }} color="indigo" />
                   <MenuButton icon={<Receipt size={22} />} label="Expenses" active={activeTab === 'expenses'} onClick={() => { setActiveTab('expenses'); setIsMobileMenuOpen(false); }} color="red" />
                   <MenuButton icon={<Users size={22} />} label="Customers" active={activeTab === 'customers'} onClick={() => { setActiveTab('customers'); setIsMobileMenuOpen(false); }} color="blue" />
                 </>
@@ -615,9 +715,7 @@ export default function App() {
 
             <div className="space-y-3 mb-8">
               <a
-                href="/#/shop"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="#/"
                 className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-base font-bold text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/50 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all duration-200 border border-slate-100 dark:border-slate-800"
               >
                 <Store size={22} className="text-indigo-600" />
@@ -712,11 +810,12 @@ function MobileNavItem({ icon, label, active, onClick, badge }: { icon: React.Re
   );
 }
 
-function MenuButton({ icon, label, active, onClick, color }: { icon: React.ReactNode, label: string, active: boolean, onClick: () => void, color: 'red' | 'blue' | 'pink' }) {
+function MenuButton({ icon, label, active, onClick, color }: { icon: React.ReactNode, label: string, active: boolean, onClick: () => void, color: 'red' | 'blue' | 'pink' | 'indigo' }) {
   const colors = {
     red: "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400",
     blue: "bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400",
-    pink: "bg-pink-50 text-pink-600 dark:bg-pink-500/10 dark:text-pink-400"
+    pink: "bg-pink-50 text-pink-600 dark:bg-pink-500/10 dark:text-pink-400",
+    indigo: "bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400"
   };
 
   return (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, onSnapshot, query, orderBy, handleFirestoreError, OperationType, auth } from '../firebase';
-import { Service, ServiceOrder } from '../types';
-import { Plus, Search, Filter, Clock, CheckCircle2, Truck, AlertCircle, Phone, User, FileText, Printer, MoreVertical, Trash2, Edit2, TrendingUp, DollarSign } from 'lucide-react';
+import { Service, ServiceOrder, Settings } from '../types';
+import { Plus, Search, Filter, Clock, CheckCircle2, Truck, AlertCircle, Phone, User, FileText, Printer, MoreVertical, Trash2, Edit2, TrendingUp, DollarSign, AlertTriangle } from 'lucide-react';
 import { format, isSameDay, subDays } from 'date-fns';
 import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { CashDrawerBox } from './CashDrawerBox';
 import { MobileFinancialServices } from './MobileFinancialServices';
 
-export default function ServiceCenter() {
+export default function ServiceCenter({ settings }: { settings: Settings | null }) {
   const [services, setServices] = useState<Service[]>([]);
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [isAddingService, setIsAddingService] = useState(false);
@@ -21,6 +21,7 @@ export default function ServiceCenter() {
   const [catalogSortBy, setCatalogSortBy] = useState<'name' | 'price-high' | 'price-low'>('name');
   const [deletingOrder, setDeletingOrder] = useState<ServiceOrder | null>(null);
   const [editingService, setEditingService] = useState<Service | null>(null);
+  const [showPrintMessage, setShowPrintMessage] = useState(false);
 
   // New Service Form State
   const [newService, setNewService] = useState<{
@@ -133,6 +134,123 @@ export default function ServiceCenter() {
       setDeletingOrder(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, 'serviceOrders');
+    }
+  };
+
+  const handlePrintOrder = (order: ServiceOrder) => {
+    setShowPrintMessage(true);
+    setTimeout(() => setShowPrintMessage(false), 5000);
+
+    const logoUrl = "https://i.ibb.co/cX7qP4n6/Picsart-26-04-10-02-09-25-057.png";
+    const timestamp = order.createdAt?.toDate ? order.createdAt.toDate() : new Date();
+
+    const memoHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Service Receipt - ${settings?.shopName || 'Digital Shop'}</title>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap');
+            body { 
+              font-family: 'Courier Prime', monospace; 
+              padding: 20px; 
+              color: #000; 
+              max-width: 400px; 
+              margin: 0 auto;
+              line-height: 1.2;
+              background: white;
+            }
+            .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 15px; margin-bottom: 15px; }
+            .logo { width: 180px; height: auto; margin-bottom: 5px; }
+            .memo-title { font-size: 16px; font-weight: 700; margin-top: 10px; text-decoration: underline; }
+            .details { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 10px; }
+            .info-box { font-size: 10px; margin-bottom: 15px; padding: 6px; border: 1px solid #000; }
+            .item-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 11px; }
+            .total-section { border-top: 2px dashed #000; padding-top: 10px; margin-top: 10px; }
+            .footer { text-align: center; margin-top: 30px; font-size: 10px; font-style: italic; border-top: 1px dashed #eee; padding-top: 10px; }
+            @media print {
+              body { padding: 0; margin: 0; width: 80mm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <img src="${logoUrl}" alt="Logo" class="logo" referrerPolicy="no-referrer" />
+            <h1 style="margin: 5px 0; font-size: 18px;">${settings?.shopName || 'DIGITAL SHOP'}</h1>
+            ${settings?.shopAddress ? `<p style="font-size: 10px; margin: 2px 0;">${settings.shopAddress}</p>` : ''}
+            <div class="memo-title">SERVICE RECEIPT</div>
+          </div>
+
+          <div class="details">
+            <span>Date: ${format(timestamp, 'yyyy-MM-dd')}</span>
+            <span>ID: ${order.id.substring(0, 8).toUpperCase()}</span>
+          </div>
+
+          <div class="info-box">
+            <strong>CUSTOMER:</strong> ${order.customerName.toUpperCase()}<br>
+            <strong>PHONE:</strong> ${order.customerPhone}
+          </div>
+
+          <div class="item-row" style="font-weight: 700; border-bottom: 1px solid #000; padding-bottom: 4px;">
+            <span>SERVICE</span>
+            <span>PRICE</span>
+          </div>
+          <div class="item-row" style="padding-top: 4px;">
+            <span>${order.serviceName.toUpperCase()}</span>
+            <span>৳${(order.price || 0).toFixed(2)}</span>
+          </div>
+          ${order.notes ? `<p style="font-size: 9px; margin-top: 4px; font-style: italic;">Note: ${order.notes}</p>` : ''}
+
+          <div class="total-section">
+            <div class="item-row" style="font-weight: 700; font-size: 14px;">
+              <span>TOTAL PAID:</span>
+              <span>৳${(order.price || 0).toFixed(2)}</span>
+            </div>
+            <div class="item-row" style="margin-top: 5px; font-size: 9px;">
+              <span>STATUS:</span>
+              <span>${order.status.toUpperCase()}</span>
+            </div>
+          </div>
+
+          <div class="footer">
+            ${settings?.memoFooter || 'Thank you for choosing our services!'}
+            <p style="margin-top: 10px; font-size: 8px; opacity: 0.5;">Powered by StockPilot</p>
+          </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(() => { window.print(); }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    try {
+      const printFrame = document.createElement('iframe');
+      printFrame.style.position = 'fixed';
+      printFrame.style.left = '-9999px';
+      printFrame.style.top = '-9999px';
+      printFrame.style.width = '1px';
+      printFrame.style.height = '1px';
+      document.body.appendChild(printFrame);
+
+      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
+      if (frameDoc) {
+        frameDoc.open();
+        frameDoc.write(memoHtml);
+        frameDoc.close();
+        
+        setTimeout(() => {
+          if (document.body.contains(printFrame)) {
+            document.body.removeChild(printFrame);
+          }
+        }, 30000);
+      } else {
+        window.print();
+      }
+    } catch (e) {
+      window.print();
     }
   };
 
@@ -328,6 +446,7 @@ export default function ServiceCenter() {
                       {order.status}
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => handlePrintOrder(order)} className="p-1.5 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg" title="Print Receipt"><Printer size={14} /></button>
                       <button onClick={() => setDeletingOrder(order)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg"><Trash2 size={14} /></button>
                     </div>
                   </div>
@@ -634,6 +753,34 @@ export default function ServiceCenter() {
           </div>
         )}
       </AnimatePresence>
+      {/* Modals & Popups */}
+      <AnimatePresence>
+        {showPrintMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 border border-slate-800 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 min-w-[320px]"
+          >
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center">
+              <Printer className="text-indigo-400 animate-pulse" size={20} />
+            </div>
+            <div>
+              <p className="font-bold text-sm">Preparing Memo...</p>
+              <p className="text-[10px] text-slate-400">Your print dialog will open shortly.</p>
+            </div>
+            <div className="ml-auto w-1 h-10 bg-slate-800 rounded-full overflow-hidden">
+              <motion.div 
+                initial={{ height: "0%" }}
+                animate={{ height: "100%" }}
+                transition={{ duration: 5 }}
+                className="w-full bg-indigo-500"
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {deletingOrder && (

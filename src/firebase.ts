@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, where, Timestamp, getDocFromServer, serverTimestamp, deleteField } from 'firebase/firestore';
+import { getFirestore, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, where, Timestamp, getDocFromServer, serverTimestamp, deleteField, writeBatch } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -32,7 +32,8 @@ export {
   getDownloadURL,
   deleteObject,
   serverTimestamp,
-  deleteField
+  deleteField,
+  writeBatch
 };
 
 // Test connection

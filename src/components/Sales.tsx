@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, handleFirestoreError, OperationType } from '../firebase';
+import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, handleFirestoreError, OperationType, writeBatch } from '../firebase';
 import { Product, Sale, Customer, Service, Settings } from '../types';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Package, AlertCircle, CheckCircle2, History, X, Filter, User, UserPlus, Zap, Barcode, Printer, Receipt, AlertTriangle, ChevronDown } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Package, AlertCircle, CheckCircle2, History, X, Filter, User, UserPlus, Zap, Barcode, Printer, Receipt, AlertTriangle, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -35,6 +35,7 @@ export default function Sales({ products, sales, customers, services, settings }
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showCostPrice, setShowCostPrice] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [receivedAmount, setReceivedAmount] = useState<number | string>('');
   const [discount, setDiscount] = useState<number | string>(0);
@@ -234,6 +235,43 @@ export default function Sales({ products, sales, customers, services, settings }
 
   const handleDeleteSale = async (saleId: string) => {
     try {
+      const sale = sales.find(s => s.id === saleId);
+      
+      if (sale) {
+        // 1. Restore the stock if it's a product
+        if (!sale.productId.startsWith('svc_')) {
+          const product = products.find(p => p.id === sale.productId);
+          if (product) {
+            await updateDoc(doc(db, 'products', product.id), {
+              stock: product.stock + sale.quantity,
+              updatedAt: Timestamp.now()
+            });
+
+            await addDoc(collection(db, 'products', product.id, 'stockHistory'), {
+              type: 'adjustment',
+              amount: sale.quantity,
+              previousStock: product.stock,
+              newStock: product.stock + sale.quantity,
+              timestamp: Timestamp.now(),
+              note: `Reverted deleted sale of ${sale.quantity} units (Sale ID: ${sale.id.slice(0, 6)})`
+            });
+          }
+        }
+
+        // 2. Revert Customer Loyalty if applicable
+        if (sale.customerId) {
+          const customer = customers.find(c => c.id === sale.customerId);
+          if (customer) {
+            const pointsToRevert = Math.floor(sale.totalPrice / 10);
+            await updateDoc(doc(db, 'customers', customer.id), {
+              totalSpent: Math.max(0, customer.totalSpent - sale.totalPrice),
+              loyaltyPoints: Math.max(0, customer.loyaltyPoints - pointsToRevert),
+              updatedAt: Timestamp.now()
+            });
+          }
+        }
+      }
+
       await deleteDoc(doc(db, 'sales', saleId));
       setSaleToDelete(null);
     } catch (err) {
@@ -248,6 +286,8 @@ export default function Sales({ products, sales, customers, services, settings }
     setSuccess(false);
 
     try {
+      const batch = writeBatch(db);
+
       // Calculate pro-rated discount for each item if there's a global discount
       const totalBeforeDiscount = cartSubtotal;
       const discountNum = Number(discount);
@@ -265,8 +305,9 @@ export default function Sales({ products, sales, customers, services, settings }
         const totalPrice = Math.max(0, itemSubtotal - itemDiscount);
         const totalProfit = (Number(item.negotiatedPrice) - item.product.cost) * item.quantity - itemDiscount;
 
-        // 1. Create sale record
-        await addDoc(collection(db, 'sales'), {
+        // 1. Create sale record with customer info
+        const saleRef = doc(collection(db, 'sales'));
+        batch.set(saleRef, {
           productId: item.product.id,
           productName: item.product.name,
           quantity: item.quantity,
@@ -274,19 +315,23 @@ export default function Sales({ products, sales, customers, services, settings }
           discount: itemDiscount,
           totalPrice,
           totalProfit,
+          customerId: selectedCustomer?.id || null,
+          customerName: selectedCustomer?.name || null,
           timestamp: Timestamp.now(),
           type: isService ? 'service' : 'product'
         });
 
         // 2. Update product stock (only if not a service)
         if (!isService) {
-          await updateDoc(doc(db, 'products', item.product.id), {
+          const productRef = doc(db, 'products', item.product.id);
+          batch.update(productRef, {
             stock: item.product.stock - item.quantity,
             updatedAt: Timestamp.now(),
           });
 
           // 3. Record in stock history
-          await addDoc(collection(db, 'products', item.product.id, 'stockHistory'), {
+          const historyRef = doc(collection(db, 'products', item.product.id, 'stockHistory'));
+          batch.set(historyRef, {
             type: 'sale',
             amount: item.quantity,
             previousStock: item.product.stock,
@@ -304,13 +349,16 @@ export default function Sales({ products, sales, customers, services, settings }
       // 4. Update customer loyalty if selected
       if (selectedCustomer) {
         const pointsEarned = Math.floor(cartTotal / 10); // 1 point per 10 BDT
-        await updateDoc(doc(db, 'customers', selectedCustomer.id), {
+        const customerRef = doc(db, 'customers', selectedCustomer.id);
+        batch.update(customerRef, {
           totalSpent: selectedCustomer.totalSpent + cartTotal,
           loyaltyPoints: selectedCustomer.loyaltyPoints + pointsEarned,
           lastVisit: Timestamp.now(),
           updatedAt: Timestamp.now()
         });
       }
+
+      await batch.commit();
 
       setCart([]);
       setSelectedCustomer(null);
@@ -340,19 +388,16 @@ export default function Sales({ products, sales, customers, services, settings }
     } finally {
       setLoading(false);
     }
-  };
+  };  const handlePrint = (customSale?: any) => {
+    const saleData = customSale || lastSale;
+    if (!saleData) return;
 
-  const handlePrint = () => {
-    if (!lastSale) return;
+    // Show a hint that something is happening
+    setShowPrintMessage(true);
+    setTimeout(() => setShowPrintMessage(false), 5000);
 
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
+    const logoUrl = "https://i.ibb.co/cX7qP4n6/Picsart-26-04-10-02-09-25-057.png";
+    const timestamp = saleData.timestamp instanceof Date ? saleData.timestamp : (saleData.timestamp?.toDate ? saleData.timestamp.toDate() : new Date());
 
     const memoHtml = `
       <!DOCTYPE html>
@@ -363,35 +408,37 @@ export default function Sales({ products, sales, customers, services, settings }
             @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap');
             body { 
               font-family: 'Courier Prime', monospace; 
-              padding: 40px; 
+              padding: 20px; 
               color: #000; 
               max-width: 400px; 
               margin: 0 auto;
               line-height: 1.2;
+              background: white;
             }
             .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 15px; margin-bottom: 15px; }
-            .logo { width: 220px; height: auto; margin-bottom: 5px; }
-            .shop-info { font-size: 12px; margin: 4px 0; }
-            .memo-title { font-size: 18px; font-weight: 700; margin-top: 15px; text-decoration: underline; }
-            .details { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 15px; }
+            .logo { width: 180px; height: auto; margin-bottom: 5px; }
+            .shop-info { font-size: 11px; margin: 2px 0; }
+            .memo-title { font-size: 16px; font-weight: 700; margin-top: 10px; text-decoration: underline; }
+            .details { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 10px; }
             table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
-            th { text-align: left; border-bottom: 1px solid #000; font-size: 11px; padding: 8px 0; }
-            td { padding: 8px 0; font-size: 11px; vertical-align: top; }
-            .total-section { border-top: 2px dashed #000; padding-top: 15px; }
-            .total-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
-            .grand-total { font-weight: 700; font-size: 18px; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 5px 0; margin: 10px 0; }
-            .footer { text-align: center; margin-top: 40px; font-size: 11px; font-style: italic; }
-            .signatures { display: flex; justify-content: space-between; margin-top: 60px; }
-            .sig-line { width: 140px; border-top: 1px solid #000; text-align: center; font-size: 10px; padding-top: 5px; }
+            th { text-align: left; border-bottom: 1px solid #000; font-size: 10px; padding: 5px 0; }
+            td { padding: 5px 0; font-size: 10px; vertical-align: top; }
+            .total-section { border-top: 2px dashed #000; padding-top: 10px; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px; }
+            .grand-total { font-weight: 700; font-size: 16px; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 4px 0; margin: 8px 0; }
+            .footer { text-align: center; margin-top: 30px; font-size: 10px; font-style: italic; border-top: 1px dashed #eee; padding-top: 10px; }
+            .signatures { display: flex; justify-content: space-between; margin-top: 50px; }
+            .sig-line { width: 120px; border-top: 1px solid #000; text-align: center; font-size: 9px; padding-top: 4px; }
             @media print {
-              body { padding: 20px; }
+              body { padding: 0; margin: 0; width: 80mm; } /* Approx thermal width */
               .no-print { display: none; }
             }
           </style>
         </head>
         <body>
           <div class="header">
-            <img src="https://i.ibb.co.com/cX7qP4n6/Picsart-26-04-10-02-09-25-057.png" alt="Logo" class="logo" referrerPolicy="no-referrer" />
+            <img src="${logoUrl}" alt="Logo" class="logo" referrerPolicy="no-referrer" />
+            <h1 style="margin: 5px 0; font-size: 18px;">${settings?.shopName || 'DIGITAL SHOP'}</h1>
             ${settings?.shopAddress ? `<p class="shop-info">${settings.shopAddress}</p>` : ''}
             ${settings?.shopPhone ? `<p class="shop-info">Phone: ${settings.shopPhone}</p>` : ''}
             ${settings?.shopEmail ? `<p class="shop-info">Email: ${settings.shopEmail}</p>` : ''}
@@ -399,99 +446,122 @@ export default function Sales({ products, sales, customers, services, settings }
           </div>
 
           <div class="details">
-            <span>Date: ${format(lastSale.timestamp, 'yyyy-MM-dd')}</span>
-            <span>Time: ${formatAppTime(lastSale.timestamp)}</span>
+            <span>Date: ${format(timestamp, 'yyyy-MM-dd')}</span>
+            <span>Time: ${formatAppTime(timestamp)}</span>
           </div>
 
-          ${lastSale.customer ? `
-            <div style="font-size: 11px; margin-bottom: 15px; padding: 8px; border: 1px solid #000;">
-              <strong>CUSTOMER:</strong> ${lastSale.customer.name.toUpperCase()}<br>
-              <strong>PHONE:</strong> ${lastSale.customer.phone}
+          ${(saleData.customer || saleData.customerName) ? `
+            <div style="font-size: 10px; margin-bottom: 15px; padding: 6px; border: 1px solid #000;">
+              <strong>CUSTOMER:</strong> ${(saleData.customer?.name || saleData.customerName || 'N/A').toUpperCase()}<br>
+              ${saleData.customer?.phone ? `<strong>PHONE:</strong> ${saleData.customer.phone}` : ''}
             </div>
           ` : ''}
 
           <table>
             <thead>
               <tr>
-                <th>ITEM DESCRIPTION</th>
-                <th style="text-align: center;">QTY</th>
-                <th style="text-align: right;">PRICE</th>
-                <th style="text-align: right;">TOTAL</th>
+                <th style="width: 50%;">ITEM</th>
+                <th style="text-align: center; width: 10%;">QTY</th>
+                <th style="text-align: right; width: 20%;">RATE</th>
+                <th style="text-align: right; width: 20%;">TOTAL</th>
               </tr>
             </thead>
             <tbody>
-              ${lastSale.items.map(item => `
+              ${saleData.items ? saleData.items.map((item: any) => `
                 <tr>
                   <td>${item.product.name.toUpperCase()}</td>
                   <td style="text-align: center;">${item.quantity}</td>
-                  <td style="text-align: right;">${Number(item.negotiatedPrice).toFixed(2)}</td>
-                  <td style="text-align: right;">${(item.quantity * Number(item.negotiatedPrice)).toFixed(2)}</td>
+                  <td style="text-align: right;">${Number(item.negotiatedPrice || 0).toFixed(0)}</td>
+                  <td style="text-align: right;">${(item.quantity * Number(item.negotiatedPrice || 0)).toFixed(0)}</td>
                 </tr>
-              `).join('')}
+              `).join('') : `
+                <tr>
+                  <td>${(saleData.productName || 'Product').toUpperCase()}</td>
+                  <td style="text-align: center;">${saleData.quantity || 1}</td>
+                  <td style="text-align: right;">${Number(saleData.unitPrice || 0).toFixed(0)}</td>
+                  <td style="text-align: right;">${Number(saleData.totalPrice || 0).toFixed(0)}</td>
+                </tr>
+              `}
             </tbody>
           </table>
 
           <div class="total-section">
             <div class="total-row">
               <span>SUBTOTAL:</span>
-              <span>৳${(lastSale.total + lastSale.discount).toFixed(2)}</span>
+              <span>৳${((saleData.total || saleData.totalPrice || 0) + (saleData.discount || 0)).toFixed(2)}</span>
             </div>
-            ${lastSale.discount > 0 ? `
-              <div class="total-row">
+            ${(saleData.discount || 0) > 0 ? `
+              <div class="total-row" style="color: #444;">
                 <span>DISCOUNT:</span>
-                <span>-৳${lastSale.discount.toFixed(2)}</span>
+                <span>-৳${Number(saleData.discount || 0).toFixed(2)}</span>
               </div>
             ` : ''}
             <div class="total-row grand-total">
               <span>NET PAYABLE:</span>
-              <span>৳${lastSale.total.toFixed(2)}</span>
+              <span>৳${(saleData.total || saleData.totalPrice || 0).toFixed(2)}</span>
             </div>
+            ${saleData.received ? `
             <div class="total-row">
-              <span>CASH RECEIVED:</span>
-              <span>৳${lastSale.received.toFixed(2)}</span>
+              <span>RECEIVED:</span>
+              <span>৳${(saleData.received || 0).toFixed(2)}</span>
             </div>
             <div class="total-row">
               <span>CHANGE:</span>
-              <span>৳${lastSale.change.toFixed(2)}</span>
+              <span>৳${(saleData.change || 0).toFixed(2)}</span>
             </div>
+            ` : ''}
           </div>
 
           <div class="footer">
             ${settings?.memoFooter || 'Thank you for your business!'}
-            <p style="margin-top: 10px; font-size: 8px;">Software by StockPilot</p>
+            <p style="margin-top: 10px; font-size: 8px; opacity: 0.5;">Powered by StockPilot</p>
           </div>
 
           <div class="signatures">
-            <div class="sig-line">Customer Signature</div>
-            <div class="sig-line">Authorized Signature</div>
+            <div class="sig-line">Customer</div>
+            <div class="sig-line">Authorized</div>
           </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(() => {
+                window.print();
+              }, 500);
+            };
+          </script>
         </body>
       </html>
     `;
 
-    const doc = iframe.contentWindow?.document;
-    if (doc) {
-      doc.open();
-      doc.write(memoHtml);
-      doc.close();
+    // Try iframe printing first (isolated)
+    try {
+      const printFrame = document.createElement('iframe');
+      printFrame.style.position = 'fixed';
+      printFrame.style.left = '-9999px';
+      printFrame.style.top = '-9999px';
+      printFrame.style.width = '1px';
+      printFrame.style.height = '1px';
+      document.body.appendChild(printFrame);
 
-      iframe.contentWindow?.focus();
-      
-      const removeIframe = () => {
-        if (document.body.contains(iframe)) {
-          document.body.removeChild(iframe);
-        }
-      };
-
-      if (iframe.contentWindow) {
-        iframe.contentWindow.onafterprint = removeIframe;
+      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
+      if (frameDoc) {
+        frameDoc.open();
+        frameDoc.write(memoHtml);
+        frameDoc.close();
+        
+        // Let it clean itself up or we can cleanup after some time
+        setTimeout(() => {
+          if (document.body.contains(printFrame)) {
+            document.body.removeChild(printFrame);
+          }
+        }, 30000); // Wait long enough for print dialog
+      } else {
+        // Fallback to main window print
+        window.print();
       }
-
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        // Fallback removal just in case afterprint doesn't fire
-        setTimeout(removeIframe, 60000);
-      }, 500);
+    } catch (e) {
+      console.error("Print error:", e);
+      window.print(); // Final fallback
     }
   };
 
@@ -621,6 +691,19 @@ export default function Sales({ products, sales, customers, services, settings }
                 <Barcode size={12} />
                 <span>Scanner</span>
               </div>
+              
+              <button
+                onClick={() => setShowCostPrice(!showCostPrice)}
+                className={cn(
+                  "flex items-center justify-center w-7 h-7 rounded-lg border transition-all",
+                  showCostPrice 
+                    ? "bg-indigo-50 border-indigo-200 text-indigo-600 dark:bg-indigo-500/10 dark:border-indigo-500/30 dark:text-indigo-400" 
+                    : "bg-white border-slate-200 text-slate-400 hover:text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:hover:text-slate-300"
+                )}
+                title={showCostPrice ? "Hide Cost Price" : "Show Cost Price"}
+              >
+                {showCostPrice ? <Eye size={14} /> : <EyeOff size={14} />}
+              </button>
             </div>
 
             <button 
@@ -681,7 +764,14 @@ export default function Sales({ products, sales, customers, services, settings }
                     <div className="mt-auto flex items-center justify-between w-full">
                       <div className="flex flex-col">
                         <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Price</span>
-                        <span className="font-black text-xs text-indigo-600 dark:text-indigo-400">৳{product.price}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="font-black text-xs text-indigo-600 dark:text-indigo-400">৳{product.price}</span>
+                          {showCostPrice && (
+                            <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-1 rounded">
+                              C:৳{product.cost}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className={cn(
                         "px-2 py-1 rounded-lg text-[9px] font-black flex flex-col items-center leading-none",
@@ -865,6 +955,11 @@ export default function Sales({ products, sales, customers, services, settings }
                       />
                       {Number(item.negotiatedPrice) !== item.product.price && (
                         <span className="text-[7px] font-bold text-amber-500 animate-pulse">!</span>
+                      )}
+                      {showCostPrice && (
+                        <span className="text-[8px] font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+                          (C:৳{item.product.cost})
+                        </span>
                       )}
                     </div>
                     <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800 rounded-md p-0.5 border border-slate-100 dark:border-slate-700">
@@ -1071,6 +1166,14 @@ export default function Sales({ products, sales, customers, services, settings }
                           </div>
                         </div>
                         <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handlePrint(sale)}
+                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-xl transition-all"
+                            title="Print Memo"
+                          >
+                            <Printer size={18} />
+                          </button>
                           <button
                             onClick={() => setSaleToDelete(sale.id)}
                             className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-all"
@@ -1078,8 +1181,9 @@ export default function Sales({ products, sales, customers, services, settings }
                           >
                             <Trash2 size={18} />
                           </button>
+                        </div>
                           <div className="text-right">
-                            <p className="font-black text-slate-900 dark:text-white">৳{sale.totalPrice.toFixed(2)}</p>
+                            <p className="font-black text-slate-900 dark:text-white">৳{(sale.totalPrice || 0).toFixed(2)}</p>
                             <p className="text-xs font-bold text-slate-500 dark:text-slate-400">{sale.quantity} units</p>
                           </div>
                         </div>
@@ -1154,6 +1258,12 @@ export default function Sales({ products, sales, customers, services, settings }
               className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col print-only"
             >
               <div className="p-6 text-center border-b border-dashed border-slate-200 dark:border-slate-800 relative">
+                <img 
+                  src="https://i.ibb.co/cX7qP4n6/Picsart-26-04-10-02-09-25-057.png" 
+                  alt="Logo" 
+                  className="w-32 h-auto mx-auto mb-4 hidden print:block" 
+                  referrerPolicy="no-referrer" 
+                />
                 <div className="print:hidden w-16 h-16 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
                   <CheckCircle2 size={32} />
                 </div>
@@ -1197,7 +1307,7 @@ export default function Sales({ products, sales, customers, services, settings }
                         <p className="text-slate-800 dark:text-slate-200 truncate">{item.product.name}</p>
                         <p className="text-[10px] text-slate-500">{item.quantity} x ৳{item.negotiatedPrice}</p>
                       </div>
-                      <span className="font-bold text-slate-900 dark:text-white">৳{(item.quantity * Number(item.negotiatedPrice)).toFixed(2)}</span>
+                      <span className="font-bold text-slate-900 dark:text-white">৳{(item.quantity * Number(item.negotiatedPrice || 0)).toFixed(2)}</span>
                     </div>
                   ))}
                 </div>
@@ -1205,15 +1315,15 @@ export default function Sales({ products, sales, customers, services, settings }
                 <div className="pt-4 border-t border-dashed border-slate-200 dark:border-slate-800 space-y-1.5">
                   <div className="flex justify-between text-sm font-black text-slate-900 dark:text-white">
                     <span>TOTAL</span>
-                    <span>৳{lastSale.total.toFixed(2)}</span>
+                    <span>৳{(lastSale.total || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
                     <span>Received</span>
-                    <span>৳{lastSale.received.toFixed(2)}</span>
+                    <span>৳{(lastSale.received || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400">
                     <span>Change</span>
-                    <span>৳{lastSale.change.toFixed(2)}</span>
+                    <span>৳{(lastSale.change || 0).toFixed(2)}</span>
                   </div>
                 </div>
 
@@ -1268,10 +1378,10 @@ export default function Sales({ products, sales, customers, services, settings }
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50 }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200] bg-amber-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-2 font-bold"
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200] bg-indigo-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-2 font-bold"
           >
-            <AlertTriangle size={20} />
-            Please allow pop-ups to print the memo.
+            <Printer size={20} className="animate-pulse" />
+            Preparing for printing...
           </motion.div>
         )}
       </AnimatePresence>

@@ -21,6 +21,8 @@ export interface Product {
   minStock: number;
   imageUrl?: string;
   description?: string;
+  keyFeatures?: string[];
+  specifications?: { [key: string]: string };
   notes?: string;
   isFeatured?: boolean;
   barcode?: string;
@@ -35,9 +37,13 @@ export interface Sale {
   productName: string;
   quantity: number;
   unitPrice: number;
+  discount: number;
   totalPrice: number;
   totalProfit: number;
+  customerId?: string | null;
+  customerName?: string | null;
   timestamp: Timestamp;
+  type: 'product' | 'service';
 }
 
 export interface Note {

@@ -28,13 +28,17 @@ import {
   CheckCircle2,
   AlertTriangle,
   Barcode as BarcodeIcon,
-  Printer
+  Printer,
+  Sparkles,
+  ListChecks,
+  Settings as SettingsIcon
 } from 'lucide-react';
 import { cn, formatAppTime, formatAppDateTime } from '../lib/utils';
 import gsap from 'gsap';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isSameDay } from 'date-fns';
 import BarcodeGenerator from 'react-barcode';
+import { generateProductInfo } from '../services/geminiService';
 
 interface InventoryProps {
   products: Product[];
@@ -101,6 +105,8 @@ export default function Inventory({ products, settings }: InventoryProps) {
   const [printQuantity, setPrintQuantity] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [imageUrlInput, setImageUrlInput] = useState('');
+  const [aiKeyFeatures, setAiKeyFeatures] = useState<string[]>([]);
+  const [aiSpecs, setAiSpecs] = useState<{ [key: string]: string }>({});
   const tableRef = useRef<HTMLTableSectionElement>(null);
   const mobileRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -292,6 +298,8 @@ export default function Inventory({ products, settings }: InventoryProps) {
         brand: (formData.get('brand') as string) || '',
         category: (formData.get('category') as string) || '',
         description: (formData.get('description') as string) || '',
+        keyFeatures: aiKeyFeatures,
+        specifications: aiSpecs,
         notes: notes,
         isFeatured: formData.get('isFeatured') === 'on',
         barcode: (formData.get('barcode') as string) || '',
@@ -379,6 +387,8 @@ export default function Inventory({ products, settings }: InventoryProps) {
     setEditingProduct(null);
     setImageUrlInput('');
     setPrefilledBarcode('');
+    setAiKeyFeatures([]);
+    setAiSpecs({});
     setError(null);
   };
 
@@ -452,6 +462,57 @@ export default function Inventory({ products, settings }: InventoryProps) {
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
       console.error("Inventory resetAllDates error:", error);
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const enrichDatabase = async () => {
+    setLoading(true);
+    setError(null);
+    setSuccessMessage('AI Auto-Enrich started... This may take a few minutes.');
+    try {
+      const needsEnrichment = products.filter(p => !p.description || p.description.length < 20);
+      if (needsEnrichment.length === 0) {
+        setSuccessMessage('All products are already fully enriched with descriptions!');
+        setLoading(false);
+        return;
+      }
+      
+      const target = needsEnrichment.slice(0, 20); // Process in batches of 20 to prevent rate-limits
+      for (const product of target) {
+        try {
+          const defaultCategory = product.category || 'Electronics';
+          let promptName = product.name;
+          if (promptName.length < 10) {
+             // Heuristic for abbreviations
+             promptName = promptName
+               .replace(/^IP /i, 'Apple iPhone ')
+               .replace(/^OP /i, 'Oppo ')
+               .replace(/^SAM /i, 'Samsung Galaxy ')
+               .replace(/^SA /i, 'Samsung Galaxy ')
+               .replace(/^RM /i, 'Redmi ');
+          }
+          const info = await generateProductInfo(promptName, defaultCategory);
+          const updateData: any = {
+            description: info.description,
+            keyFeatures: info.keyFeatures || [],
+            specifications: info.specifications || {},
+            updatedAt: Timestamp.now()
+          };
+          if (!product.category || product.category === 'default') {
+             updateData.category = defaultCategory;
+          }
+          await updateDoc(doc(db, 'products', product.id), updateData);
+        } catch(err) {
+          console.warn('Failed to enrich product:', product.name, err);
+        }
+      }
+      setSuccessMessage(`Successfully enriched ${target.length} products with AI!`);
+      setTimeout(() => setSuccessMessage(null), 5000);
+    } catch (error: any) {
+      console.error("Enrichment error:", error);
       setError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
@@ -534,6 +595,14 @@ export default function Inventory({ products, settings }: InventoryProps) {
   const sortedDates = Object.entries(productsByDate)
     .sort((a, b) => b[0].localeCompare(a[0]))
     .slice(0, 5); // Show last 5 days
+
+  const openEditModal = (product: Product) => {
+    setEditingProduct(product);
+    setImageUrlInput(product.imageUrl || '');
+    setAiKeyFeatures(product.keyFeatures || []);
+    setAiSpecs(product.specifications || {});
+    setIsModalOpen(true);
+  };
 
   return (
     <div className="space-y-4 min-h-[600px]" ref={containerRef}>
@@ -689,6 +758,15 @@ export default function Inventory({ products, settings }: InventoryProps) {
             >
               <Calendar size={18} />
             </button>
+            <button
+              onClick={enrichDatabase}
+              className="p-2 text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 rounded-xl transition-all flex items-center justify-center gap-2 font-bold text-xs uppercase"
+              title="Auto-Enrich Missing Details with AI"
+              disabled={loading}
+            >
+              <Sparkles size={18} />
+              <span className="hidden sm:inline">Auto-Enrich</span>
+            </button>
 
             <button
               onClick={exportToCSV}
@@ -743,7 +821,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
             <div className="flex items-start gap-4">
               <div className="bg-slate-100 dark:bg-slate-800 w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden shrink-0 border border-slate-200 dark:border-slate-700">
                 {product.imageUrl ? (
-                  <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" loading="lazy" />
                 ) : (
                   <Package size={20} className="text-slate-400 dark:text-slate-500" />
                 )}
@@ -842,11 +920,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
                 History
               </button>
               <button
-                onClick={() => {
-                  setEditingProduct(product);
-                  setImageUrlInput(product.imageUrl || '');
-                  setIsModalOpen(true);
-                }}
+                onClick={() => openEditModal(product)}
                 className="flex items-center justify-center gap-2 py-3 text-xs font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 rounded-2xl hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-all active:scale-95 border border-indigo-100/50 dark:border-indigo-500/20"
               >
                 <Edit2 size={16} />
@@ -894,7 +968,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
                   <div className="flex items-center gap-4">
                     <div className="bg-slate-100 dark:bg-slate-800 w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden shrink-0 border border-slate-200 dark:border-slate-700">
                       {product.imageUrl ? (
-                        <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" loading="lazy" />
                       ) : (
                         <Package size={18} className="text-slate-400 dark:text-slate-500" />
                       )}
@@ -1028,11 +1102,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
                       <History size={16} />
                     </button>
                     <button
-                      onClick={() => {
-                        setEditingProduct(product);
-                        setImageUrlInput(product.imageUrl || '');
-                        setIsModalOpen(true);
-                      }}
+                      onClick={() => openEditModal(product)}
                       className="p-2 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg border border-transparent hover:border-indigo-100 dark:hover:border-indigo-500/20 transition-all"
                       title="Edit Product"
                     >
@@ -1169,6 +1239,42 @@ export default function Inventory({ products, settings }: InventoryProps) {
                           className="flex-1 py-2 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all"
                         >
                           Generate SKU & Barcode
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            const form = (e.currentTarget.closest('form') as HTMLFormElement);
+                            const name = (form.querySelector('[name="name"]') as HTMLInputElement).value;
+                            const category = (form.querySelector('[name="category"]') as HTMLInputElement).value;
+                            
+                            if (!name || !category) {
+                              setError("Please enter Product Name and Category first.");
+                              return;
+                            }
+
+                            try {
+                              setLoading(true);
+                              setError(null);
+                              const info = await generateProductInfo(name, category);
+                              
+                              const descTextarea = form.querySelector('[name="description"]') as HTMLTextAreaElement;
+                              if (descTextarea) descTextarea.value = info.description;
+                              
+                              setAiKeyFeatures(info.keyFeatures);
+                              setAiSpecs(info.specifications);
+                              
+                              setSuccessMessage("Professional product info generated by AI!");
+                              setTimeout(() => setSuccessMessage(null), 3000);
+                            } catch (err) {
+                              setError("Failed to generate AI info. Please try again.");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          className="flex-1 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-none"
+                        >
+                          <Sparkles size={12} />
+                          AI Generate Info
                         </button>
                         <button
                           type="button"
@@ -1321,6 +1427,61 @@ export default function Inventory({ products, settings }: InventoryProps) {
                           />
                         </div>
                       </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 ml-1">Product Description</label>
+                        <textarea
+                          name="description"
+                          defaultValue={editingProduct?.description}
+                          rows={3}
+                          className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white transition-all resize-none"
+                          placeholder="Professional description..."
+                        />
+                      </div>
+
+                      {/* AI Generated Preview */}
+                      {(aiKeyFeatures.length > 0 || Object.keys(aiSpecs).length > 0) && (
+                        <div className="p-4 bg-indigo-50/50 dark:bg-indigo-500/5 border border-indigo-100 dark:border-indigo-500/20 rounded-2xl space-y-4">
+                          <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                            <Sparkles size={14} />
+                            <span className="text-[10px] font-black uppercase tracking-widest">AI Generated Content Preview</span>
+                          </div>
+                          
+                          {aiKeyFeatures.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <ListChecks size={12} className="text-slate-400" />
+                                <span className="text-[10px] font-bold text-slate-500 uppercase">Key Features</span>
+                              </div>
+                              <ul className="grid grid-cols-1 gap-1">
+                                {aiKeyFeatures.map((f, i) => (
+                                  <li key={i} className="text-[11px] text-slate-600 dark:text-slate-400 flex items-start gap-2">
+                                    <div className="w-1 h-1 bg-indigo-400 rounded-full mt-1.5 shrink-0" />
+                                    {f}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {Object.keys(aiSpecs).length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <SettingsIcon size={12} className="text-slate-400" />
+                                <span className="text-[10px] font-bold text-slate-500 uppercase">Specifications</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {Object.entries(aiSpecs).map(([key, val]) => (
+                                  <div key={key} className="flex flex-col p-2 bg-white dark:bg-slate-900 rounded-lg border border-slate-100 dark:border-slate-800">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{key}</span>
+                                    <span className="text-[10px] font-medium text-slate-700 dark:text-slate-300 truncate">{val}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       <div className="space-y-1">
                         <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 ml-1">Notes / Issues</label>
@@ -1679,69 +1840,81 @@ export default function Inventory({ products, settings }: InventoryProps) {
 
                     const printContent = printRef.current.innerHTML;
                     
-                    const printWindow = window.open('', '_blank', 'width=600,height=600');
-                    if (!printWindow) {
-                      setError("Pop-up blocked. Please allow pop-ups to print labels.");
-                      return;
-                    }
+                    try {
+                      const printFrame = document.createElement('iframe');
+                      printFrame.style.position = 'fixed';
+                      printFrame.style.left = '-9999px';
+                      printFrame.style.top = '-9999px';
+                      printFrame.style.width = '1px';
+                      printFrame.style.height = '1px';
+                      document.body.appendChild(printFrame);
 
-                    printWindow.document.write(`
-                      <!DOCTYPE html>
-                      <html>
-                        <head>
-                          <title>Print Labels</title>
-                          <style>
-                            @page { 
-                              size: 38mm 28mm; 
-                              margin: 0; 
-                            }
-                            html, body { 
-                              margin: 0; 
-                              padding: 0; 
-                              width: 38mm; 
-                              height: 28mm;
-                              background: white;
-                            }
-                            .print-container { 
-                              display: block;
-                              width: 38mm;
-                            }
-                            .label-page {
-                              width: 38mm;
-                              height: 28mm;
-                              display: flex;
-                              flex-direction: column;
-                              align-items: center;
-                              justify-content: center;
-                              page-break-after: always;
-                              overflow: hidden;
-                              box-sizing: border-box;
-                              padding: 1.5mm;
-                            }
-                            /* Force black and white for thermal printers */
-                            * {
-                              color: black !important;
-                              -webkit-print-color-adjust: exact;
-                              print-color-adjust: exact;
-                            }
-                          </style>
-                        </head>
-                        <body>
-                          <div class="print-container">${printContent}</div>
-                          <script>
-                            window.onload = function() {
-                              setTimeout(function() {
-                                window.print();
-                                window.onafterprint = function() {
-                                  window.close();
-                                };
-                              }, 500);
-                            };
-                          </script>
-                        </body>
-                      </html>
-                    `);
-                    printWindow.document.close();
+                      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
+                      if (!frameDoc) throw new Error("Could not access iframe document");
+
+                      frameDoc.open();
+                      frameDoc.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>Print Labels</title>
+                            <style>
+                              @page { 
+                                size: 38mm 28mm; 
+                                margin: 0; 
+                              }
+                              html, body { 
+                                margin: 0; 
+                                padding: 0; 
+                                width: 38mm; 
+                                height: 28mm;
+                                background: white;
+                              }
+                              .print-container { 
+                                display: block;
+                                width: 38mm;
+                              }
+                              .label-page {
+                                width: 38mm;
+                                height: 28mm;
+                                display: flex;
+                                flex-direction: column;
+                                align-items: center;
+                                justify-content: center;
+                                page-break-after: always;
+                                overflow: hidden;
+                                box-sizing: border-box;
+                                padding: 1.5mm;
+                              }
+                              * {
+                                color: black !important;
+                                -webkit-print-color-adjust: exact;
+                                print-color-adjust: exact;
+                              }
+                            </style>
+                          </head>
+                          <body>
+                            <div class="print-container">${printContent}</div>
+                            <script>
+                              window.onload = function() {
+                                setTimeout(function() {
+                                  window.print();
+                                }, 500);
+                              };
+                            </script>
+                          </body>
+                        </html>
+                      `);
+                      frameDoc.close();
+                      
+                      setTimeout(() => {
+                        if (document.body.contains(printFrame)) {
+                          document.body.removeChild(printFrame);
+                        }
+                      }, 30000);
+                    } catch (e) {
+                      setError("Printing failed. Connection issue or browser restriction.");
+                    }
                   }}
                   className="flex-1 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 dark:shadow-none flex items-center justify-center gap-2"
                 >
@@ -1847,7 +2020,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden shrink-0">
                           {product.imageUrl ? (
-                            <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" loading="lazy" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-slate-300">
                               <Package size={20} />
