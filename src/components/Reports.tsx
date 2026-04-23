@@ -50,157 +50,122 @@ export default function Reports({ products, sales, serviceOrders, expenses, cust
     );
   };
 
-  const handlePrintBarcodes = () => {
-    setIsPrinting(true);
-    const selectedList = products.filter(p => selectedProducts.includes(p.id));
-    
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Barcode Labels</title>
-          <style>
-            @media print {
-              @page { margin: 0; size: 80mm 30mm; }
-              body { margin: 0; padding: 0; }
-            }
-            .label-page {
-              padding: 5mm;
-              display: flex;
-              flex-wrap: wrap;
-              gap: 5mm;
-              background: white;
-            }
-            .label-item {
-              width: 35mm;
-              height: 20mm;
-              border: 1px dashed #ccc;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              text-align: center;
-              page-break-inside: avoid;
-              font-family: -apple-system, system-ui, sans-serif;
-            }
-            .shop-name { font-size: 8px; font-weight: bold; margin-bottom: 2px; text-transform: uppercase; }
-            .product-name { font-size: 7px; margin-bottom: 4px; max-width: 90%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-            .barcode { font-family: 'Libre Barcode 39', cursive; font-size: 24px; margin: 2px 0; }
-            .barcode-text { font-size: 8px; font-weight: bold; letter-spacing: 2px; }
-            .price { font-size: 10px; font-weight: 800; margin-top: 2px; }
-          </style>
-          <link href="https://fonts.googleapis.com/css2?family=Libre+Barcode+39&display=swap" rel="stylesheet">
-        </head>
-        <body>
-          <div class="label-page">
-            ${selectedList.map(p => Array(labelQuantity).fill(0).map(() => `
-              <div class="label-item">
-                <div class="shop-name">${settings?.shopName || 'DIGITAL SHOP'}</div>
-                <div class="product-name">${p.name}</div>
-                <div class="barcode">*${p.barcode || p.id.slice(0, 8)}*</div>
-                <div class="barcode-text">${p.barcode || p.id.slice(0, 8)}</div>
-                <div class="price">৳${p.price}</div>
-              </div>
-            `).join('')).join('')}
-          </div>
-          <script>
-            window.onload = () => {
-              setTimeout(() => {
-                window.print();
-                window.close();
-              }, 1000);
-            }
-          </script>
-        </body>
-      </html>
-    `;
 
-    printWindow.document.write(html);
-    printWindow.document.close();
-    setIsPrinting(false);
-  };
-
-  const handlePrintDailyReport = () => {
-    setIsPrinting(true);
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    
-    const todaySales = sales.filter(s => {
-      const saleDate = s.timestamp instanceof Date ? s.timestamp : (s.timestamp?.toDate ? s.timestamp.toDate() : new Date());
-      saleDate.setHours(0,0,0,0);
-      return saleDate.getTime() === today.getTime();
-    });
-
-    const totalRevenue = todaySales.reduce((acc, s) => acc + s.totalPrice, 0);
-    const totalProfit = todaySales.reduce((acc, s) => acc + s.totalProfit, 0);
-
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Daily Sales Report - ${format(new Date(), 'yyyy-MM-dd')}</title>
-          <style>
-            body { font-family: 'Courier New', monospace; padding: 20px; font-size: 12px; }
-            .header { text-align: center; border-bottom: 2px solid #000; margin-bottom: 20px; padding-bottom: 10px; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }
-            .total-row { font-weight: bold; border-top: 2px solid #000; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h2>${settings?.shopName || 'Digital Shop'}</h2>
-            <h3>DAILY SALES REPORT</h3>
-            <p>Date: ${format(new Date(), 'EEEE, MMMM do, yyyy')}</p>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Product</th>
-                <th>Qty</th>
-                <th>Price</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${todaySales.map(s => `
-                <tr>
-                  <td>${format(s.timestamp instanceof Date ? s.timestamp : s.timestamp.toDate(), 'HH:mm')}</td>
-                  <td>${s.productName}</td>
-                  <td>${s.quantity}</td>
-                  <td>৳${s.unitPrice}</td>
-                  <td>৳${s.totalPrice}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-            <tfoot>
-              <tr class="total-row">
-                <td colspan="4">TOTAL REVENUE</td>
-                <td>৳${totalRevenue.toFixed(2)}</td>
-              </tr>
-              <tr class="total-row">
-                <td colspan="4">TOTAL PROFIT</td>
-                <td>৳${totalProfit.toFixed(2)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <script>window.onload = () => { window.print(); window.close(); }</script>
-        </body>
-      </html>
-    `;
-
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(html);
-      printWindow.document.close();
+  const printGlobalHtml = (bodyHtml: string, styleHtml: string = '') => {
+    let printDiv = document.getElementById('global-print-container');
+    if (!printDiv) {
+      printDiv = document.createElement('div');
+      printDiv.id = 'global-print-container';
+      printDiv.className = 'print-only';
+      document.body.appendChild(printDiv);
     }
-    setIsPrinting(false);
+    printDiv.innerHTML = styleHtml + '<div style="background:white; color:black; width:100%; height:100%;">' + bodyHtml + '</div>';
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => { if (printDiv) printDiv.innerHTML = ''; }, 500);
+    }, 100);
   };
 
+  const handlePrintBarcodes = () => {
+    const selectedList = products.filter(p => selectedProducts.includes(p.id));
+    if(!selectedList.length) return;
+    const bodyHtml = Array.from({ length: labelQuantity }).map(() => 
+      selectedList.map(p => `
+        <div class="label-page">
+          <div style="width: 100%; text-align: center;">
+            <p style="font-size: 7pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; margin: 0; line-height: 1;">${settings?.shopName || 'SMART DIGITAL CARE'}</p>
+          </div>
+          <div style="width: 100%; text-align: center; margin: 1mm 0;">
+            <p style="font-size: 9pt; font-weight: 900; text-transform: uppercase; margin: 0; line-height: 1.1; text-align: center;">${p.name}</p>
+          </div>
+          <div style="text-align:center;">
+             <p style="font-family: monospace; font-size: 11pt; margin:0; letter-spacing: 2px;">*${(p.barcode || p.sku || p.id).substring(0,8).toUpperCase()}*</p>
+          </div>
+          <div style="display:flex; justify-content: space-between; width: 100%; align-items:flex-end;">
+            <p style="font-size: 5pt; color: #666; margin:0;">${p.category || 'ITEM'}</p>
+            <p style="font-size: 11pt; font-weight: 900; margin:0; line-height: 1;">৳${p.price}</p>
+          </div>
+        </div>
+      `).join('')
+    ).join('');
+
+    const styleHtml = `<style>
+        @page { size: 38mm 28mm !important; margin: 0 !important; }
+        .label-page { width: 38mm; height: 28mm; display: flex; flex-direction: column; align-items: center; justify-content: center; page-break-after: always; overflow: hidden; box-sizing: border-box; padding: 1.5mm; background: white; color: black; }
+        #global-print-container * { color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    </style>`;
+    
+    printGlobalHtml(bodyHtml, styleHtml);
+  };
+
+  const handlePrintValuation = () => {
+    const totalVal = products.reduce((sum, p) => sum + (p.price * p.stock), 0);
+    const bodyHtml = `
+      <div style="padding: 40px; max-width: 800px; margin: auto; font-family: sans-serif;">
+        <h1 style="text-align: center; border-bottom: 2px solid #ef4a23; padding-bottom: 20px;">Inventory Valuation Report</h1>
+        <p><strong>Shop:</strong> ${settings?.shopName || 'STORE'}</p>
+        <p><strong>Date Generated:</strong> ${new Date().toLocaleString()}</p>
+        <table style="width: 100%; border-collapse: collapse; margin-top: 30px;">
+          <thead>
+            <tr>
+              <th style="text-align: left; padding: 10px; border-bottom: 1px solid #ddd;">Product</th>
+              <th style="padding: 10px; border-bottom: 1px solid #ddd;">Stock</th>
+              <th style="text-align: right; padding: 10px; border-bottom: 1px solid #ddd;">Unit Price</th>
+              <th style="text-align: right; padding: 10px; border-bottom: 1px solid #ddd;">Total Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${products.map(p => `
+              <tr>
+                <td style="padding: 10px; border-bottom: 1px solid #eee;">${p.name}</td>
+                <td style="text-align:center; padding: 10px; border-bottom: 1px solid #eee;">${p.stock}</td>
+                <td style="text-align:right; padding: 10px; border-bottom: 1px solid #eee;">৳${p.price.toLocaleString()}</td>
+                <td style="text-align:right; padding: 10px; border-bottom: 1px solid #eee;">৳${(p.price * p.stock).toLocaleString()}</td>
+              </tr>
+            `).join('')}
+            <tr style="font-weight: bold; background: #f9f9f9;">
+              <td colspan="3" style="text-align:right; padding: 10px;">Total Valuation:</td>
+              <td style="text-align:right; padding: 10px;">৳${totalVal.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+    printGlobalHtml(bodyHtml);
+  };
+
+  const handlePrintReport = () => {
+    const totalSales = sales.reduce((sum, s) => sum + ((s as any).total || s.totalPrice || 0), 0);
+    const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const totalService = serviceOrders.filter(so=>so.status==='completed').reduce((sum, so) => sum + (so.price || 0), 0);
+    const totalIn = totalSales + totalService;
+    
+    const bodyHtml = `
+      <div style="padding: 40px; max-width: 800px; margin: auto; font-family: sans-serif;">
+        <h1 style="text-align: center; border-bottom: 2px solid #ef4a23; padding-bottom: 20px;">Financial Report</h1>
+        <p><strong>Shop:</strong> ${settings?.shopName || 'STORE'}</p>
+        <p><strong>Date Generated:</strong> ${new Date().toLocaleString()}</p>
+        
+        <div style="display:flex; justify-content: space-between; margin-top: 30px;">
+           <div style="flex:1; background: #f8fafc; padding: 20px; border-radius: 12px; margin-right: 15px;">
+              <h3 style="margin-top:0">Total Inflow</h3>
+              <p style="font-size: 24px; font-weight: bold; margin:0;">৳${totalIn.toLocaleString()}</p>
+           </div>
+           <div style="flex:1; background: #fef2f2; padding: 20px; border-radius: 12px; margin-right: 15px;">
+              <h3 style="margin-top:0; color:#ef4444;">Total Outflow</h3>
+              <p style="font-size: 24px; font-weight: bold; margin:0; color:#ef4444;">৳${totalExpenses.toLocaleString()}</p>
+           </div>
+           <div style="flex:1; background: #f0fdf4; padding: 20px; border-radius: 12px;">
+              <h3 style="margin-top:0; color:#10b981;">Net Balance</h3>
+              <p style="font-size: 24px; font-weight: bold; margin:0; color:#10b981;">৳${(totalIn - totalExpenses).toLocaleString()}</p>
+           </div>
+        </div>
+      </div>
+    `;
+    printGlobalHtml(bodyHtml);
+  };
+  
   return (
     <div className="h-[calc(100vh-12rem)] lg:h-[calc(100vh-7rem)] flex flex-col gap-4 -m-1 p-1">
       {/* Header Container */}
@@ -378,7 +343,7 @@ export default function Reports({ products, sales, serviceOrders, expenses, cust
                     <h3 className="text-xl font-black text-slate-900 dark:text-white mb-1 uppercase tracking-tight">Today Summary</h3>
                     <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 font-medium">Full list of transactions for today</p>
                     <button 
-                      onClick={handlePrintDailyReport}
+                      onClick={handlePrintReport}
                       className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black py-4 rounded-2xl flex items-center justify-center gap-2"
                     >
                       <Printer size={20} />
@@ -441,52 +406,7 @@ export default function Reports({ products, sales, serviceOrders, expenses, cust
                 </div>
 
                 <button 
-                  onClick={() => {
-                    const html = `
-                      <html>
-                        <head>
-                          <title>Inventory Valuation Report</title>
-                          <style>
-                             body { font-family: sans-serif; padding: 40px; }
-                             table { width: 100%; border-collapse: collapse; }
-                             th, td { text-align: left; padding: 12px; border-bottom: 1px solid #eee; }
-                             .total { font-weight: bold; background: #f9f9f9; }
-                          </style>
-                        </head>
-                        <body>
-                          <h1>${settings?.shopName || 'Digital Shop'}</h1>
-                          <h2>INVENTORY VALUATION REPORT - ${new Date().toLocaleDateString()}</h2>
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Item</th>
-                                <th>Stock</th>
-                                <th>Cost</th>
-                                <th>Valuation</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              ${products.map(p => `
-                                <tr>
-                                  <td>${p.name}</td>
-                                  <td>${p.stock}</td>
-                                  <td>৳${p.cost}</td>
-                                  <td>৳${p.stock * p.cost}</td>
-                                </tr>
-                              `).join('')}
-                              <tr class="total">
-                                <td colspan="3">GRAND TOTAL</td>
-                                <td>৳${products.reduce((acc, p) => acc + (p.stock * p.cost), 0)}</td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          <script>window.onload=()=>window.print()</script>
-                        </body>
-                      </html>
-                    `;
-                    const w = window.open('', '_blank');
-                    if(w) { w.document.write(html); w.document.close(); }
-                  }}
+                  onClick={handlePrintValuation}
                   className="w-full border-4 border-slate-900 dark:border-white text-slate-900 dark:text-white font-black py-4 rounded-3xl hover:bg-slate-900 hover:text-white dark:hover:bg-white dark:hover:text-slate-900 transition-all flex items-center justify-center gap-3"
                 >
                   <Download size={20} />

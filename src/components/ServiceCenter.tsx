@@ -226,32 +226,30 @@ export default function ServiceCenter({ settings }: { settings: Settings | null 
       </html>
     `;
 
-    try {
-      const printFrame = document.createElement('iframe');
-      printFrame.style.position = 'fixed';
-      printFrame.style.left = '-9999px';
-      printFrame.style.top = '-9999px';
-      printFrame.style.width = '1px';
-      printFrame.style.height = '1px';
-      document.body.appendChild(printFrame);
-
-      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
-      if (frameDoc) {
-        frameDoc.open();
-        frameDoc.write(memoHtml);
-        frameDoc.close();
-        
-        setTimeout(() => {
-          if (document.body.contains(printFrame)) {
-            document.body.removeChild(printFrame);
-          }
-        }, 30000);
-      } else {
-        window.print();
-      }
-    } catch (e) {
-      window.print();
+    
+    let printDiv = document.getElementById('global-print-container');
+    if (!printDiv) {
+      printDiv = document.createElement('div');
+      printDiv.id = 'global-print-container';
+      printDiv.className = 'print-only';
+      document.body.appendChild(printDiv);
     }
+    // Extract body and style from the html string
+    const styleMatch = memoHtml ? memoHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i) : null;
+    const bodyMatch = memoHtml ? memoHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i) : null;
+    
+    const styleString = styleMatch ? "<style>" + styleMatch[1] + "</style>" : '';
+    const bodyString = bodyMatch ? bodyMatch[1] : memoHtml;
+
+    printDiv.innerHTML = styleString + '<div style="background:white; color:black; width:100%; height:100%;">' + bodyString + '</div>';
+    
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        if (printDiv) printDiv.innerHTML = '';
+      }, 500);
+    }, 100);
+  
   };
 
   const filteredOrders = orders.filter(order => {

@@ -36,6 +36,8 @@ import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { PCBuilder } from './PCBuilder';
+
 gsap.registerPlugin(ScrollTrigger);
 
 interface StorefrontProps {
@@ -53,8 +55,18 @@ export default function Storefront({ user }: StorefrontProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [cartItems, setCartItems] = useState<Product[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'shop' | 'pc-builder'>('shop');
   
   const handleDemo = (feature: string) => {
+    if (feature === 'PC Builder') {
+       setViewMode('pc-builder');
+       window.scrollTo(0, 0);
+       return;
+    }
+    if (feature === 'Cart Panel') {
+       setIsCartOpen(true);
+       return;
+    }
     alert(`Demo Feature: "${feature}" is coming soon!`);
   };
 
@@ -165,6 +177,42 @@ export default function Storefront({ user }: StorefrontProps) {
     window.open(`https://wa.me/?text=${encodedMessage}`, '_blank');
   };
 
+  const cartWithQuantities = cartItems.reduce((acc, product) => {
+    const existing = acc.find(item => item.id === product.id);
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      acc.push({ ...product, quantity: 1 });
+    }
+    return acc;
+  }, [] as (Product & { quantity: number })[]);
+
+  const handleCartCheckout = () => {
+    let orderDetails = "Hi! I want to place an order from the shop:\n\n";
+    let total = 0;
+    cartWithQuantities.forEach(item => {
+        orderDetails += `*${item.name}* x${item.quantity} - ৳${(item.price * item.quantity).toLocaleString()}\n`;
+        total += item.price * item.quantity;
+    });
+    orderDetails += `\n*Grand Total:* ৳${total.toLocaleString()}\n`;
+    orderDetails += `\nAre these items available?`;
+
+    const encodedMessage = encodeURIComponent(orderDetails);
+    window.open(`https://wa.me/?text=${encodedMessage}`, '_blank');
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCartItems(prev => {
+      const index = prev.findIndex(p => p.id === productId);
+      if (index !== -1) {
+        const newCart = [...prev];
+        newCart.splice(index, 1);
+        return newCart;
+      }
+      return prev;
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center relative overflow-hidden">
@@ -173,6 +221,10 @@ export default function Storefront({ user }: StorefrontProps) {
         </div>
       </div>
     );
+  }
+
+  if (viewMode === 'pc-builder') {
+     return <PCBuilder products={products} onBack={() => setViewMode('shop')} />;
   }
 
   return (
@@ -349,7 +401,13 @@ export default function Storefront({ user }: StorefrontProps) {
             {/* Primary Rotating Banner */}
             <div 
               className="lg:col-span-2 bg-slate-900 rounded-xl overflow-hidden relative cursor-pointer shadow-sm min-h-[160px] sm:min-h-[240px] flex items-center justify-center p-0 text-center"
-              onClick={() => handleDemo(`Promo Slide ${currentSlide + 1}`)}
+              onClick={() => {
+                if (currentSlide === 3) {
+                  handleDemo('PC Builder');
+                } else {
+                  handleDemo(`Promo Slide ${currentSlide + 1}`);
+                }
+              }}
             >
               <AnimatePresence mode="wait">
                 {currentSlide === 0 && (
@@ -439,21 +497,21 @@ export default function Storefront({ user }: StorefrontProps) {
             {/* Mobile Sidebar Banners - 2 Grid underneath on mobile, stacked on desktop */}
             <div className="grid grid-cols-2 md:grid-cols-1 gap-4 lg:col-span-1">
                <div 
-                 onClick={() => handleDemo('App Download Promo')}
-                 className="bg-blue-50 rounded-xl overflow-hidden cursor-pointer shadow-sm relative h-32 md:h-auto min-h-[140px]"
+                 onClick={() => handleDemo('Device Trade-In')}
+                 className="bg-indigo-900 rounded-xl overflow-hidden cursor-pointer shadow-sm relative h-32 md:h-auto min-h-[140px]"
                >
-                 <img src="https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?auto=format&fit=crop&q=80&w=400" className="absolute inset-0 w-full h-full object-cover" alt="App Banner" referrerPolicy="no-referrer" />
-                 <div className="absolute inset-0 bg-gradient-to-t from-red-600/90 to-transparent p-4 flex flex-col justify-end">
-                    <span className="text-white font-bold text-sm leading-tight">সব কিছু অ্যাপে...</span>
+                 <img src="https://images.unsplash.com/photo-1541807084-5c52b6b3adef?auto=format&fit=crop&q=80&w=400" className="absolute inset-0 w-full h-full object-cover" alt="Exchange Program" referrerPolicy="no-referrer" />
+                 <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/90 to-transparent p-4 flex flex-col justify-end">
+                    <span className="text-white font-bold text-sm leading-tight">Exchange Offer</span>
                  </div>
                </div>
                <div 
-                 onClick={() => handleDemo('AC Ton Calculator')}
-                 className="bg-cyan-50 rounded-xl overflow-hidden cursor-pointer shadow-sm relative h-32 md:h-auto min-h-[140px]"
+                 onClick={() => handleDemo('Custom Liquid Cooling')}
+                 className="bg-slate-900 rounded-xl overflow-hidden cursor-pointer shadow-sm relative h-32 md:h-auto min-h-[140px]"
                >
-                 <img src="https://images.unsplash.com/photo-1581092795360-fd1ca04f0952?auto=format&fit=crop&q=80&w=400" className="absolute inset-0 w-full h-full object-cover" alt="AC Calc Banner" referrerPolicy="no-referrer" />
-                 <div className="absolute inset-0 bg-gradient-to-t from-blue-900/90 to-transparent p-4 flex flex-col justify-end">
-                    <span className="text-white font-bold text-sm leading-tight">AC Ton Calculator</span>
+                 <img src="https://images.unsplash.com/photo-1587202372634-32705e3bf49c?auto=format&fit=crop&q=80&w=400" className="absolute inset-0 w-full h-full object-cover" alt="Liquid Cooling" referrerPolicy="no-referrer" />
+                 <div className="absolute inset-0 bg-gradient-to-t from-[#ef4a23]/90 to-transparent p-4 flex flex-col justify-end">
+                    <span className="text-white font-bold text-sm leading-tight">Liquid Cooling</span>
                  </div>
                </div>
             </div>
@@ -969,20 +1027,20 @@ export default function Storefront({ user }: StorefrontProps) {
              </div>
           </div>
 
-          <p className="text-[11px] text-white/50 mb-4">Experience SDC App on your mobile:</p>
-          <div className="flex gap-4 justify-center mb-8">
-             <button onClick={() => handleDemo('Google Play Store Download')} className="border border-white/20 rounded-lg px-4 py-2 flex items-center gap-3 hover:bg-white/5 transition-colors">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/d/d0/Google_Play_Arrow_logo.svg" alt="Play Store" className="w-5" />
-                <div className="text-left leading-tight">
-                   <p className="text-[9px] text-white/60">Download on</p>
-                   <p className="text-sm text-white font-medium">Google Play</p>
+          <p className="text-[11px] text-white/50 mb-4 uppercase tracking-[0.2em] font-bold">Join Our Tech Community:</p>
+          <div className="flex flex-wrap gap-4 justify-center mb-8">
+             <button onClick={() => window.open('https://facebook.com/groups/sdccumilla', '_blank')} className="border border-[#1877F2]/30 rounded-lg px-6 py-3 flex items-center gap-3 bg-[#1877F2]/10 hover:bg-[#1877F2]/20 transition-colors group relative overflow-hidden">
+                <div className="absolute inset-0 w-1/2 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-[200%] group-hover:animate-[shimmer_1.5s_infinite]" />
+                <div className="text-left leading-tight relative z-10">
+                   <p className="text-xs text-white/80 font-mono tracking-widest uppercase mb-0.5">Connect on</p>
+                   <p className="text-sm text-[#1877F2] font-black tracking-widest uppercase">Facebook</p>
                 </div>
              </button>
-             <button onClick={() => handleDemo('App Store Download')} className="border border-white/20 rounded-lg px-4 py-2 flex items-center gap-3 hover:bg-white/5 transition-colors">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/3/31/Apple_logo_white.svg" alt="App Store" className="w-4" />
-                <div className="text-left leading-tight">
-                   <p className="text-[9px] text-white/60">Download on</p>
-                   <p className="text-sm text-white font-medium">App Store</p>
+             <button onClick={() => window.open('https://discord.gg/sdccumilla', '_blank')} className="border border-[#5865F2]/30 rounded-lg px-6 py-3 flex items-center gap-3 bg-[#5865F2]/10 hover:bg-[#5865F2]/20 transition-colors group relative overflow-hidden">
+                <div className="absolute inset-0 w-1/2 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-[200%] group-hover:animate-[shimmer_1.5s_infinite]" />
+                <div className="text-left leading-tight relative z-10">
+                   <p className="text-xs text-white/80 font-mono tracking-widest uppercase mb-0.5">Join the</p>
+                   <p className="text-sm text-[#5865F2] font-black tracking-widest uppercase">Discord</p>
                 </div>
              </button>
           </div>
@@ -1008,7 +1066,7 @@ export default function Storefront({ user }: StorefrontProps) {
           <Zap size={20} className="mb-1" />
           <span className="text-[9px] font-medium leading-none">Flash Deal</span>
         </button>
-        <button onClick={() => handleDemo('PC Builder')} className="flex flex-col items-center justify-center w-16 h-12 text-white/80 hover:text-white transition-colors">
+        <button onClick={() => { setViewMode('pc-builder'); window.scrollTo(0,0); }} className="flex flex-col items-center justify-center w-16 h-12 text-white/80 hover:text-white transition-colors">
           <Monitor size={20} className="mb-1" />
           <span className="text-[9px] font-medium leading-none">PC Builder</span>
         </button>
@@ -1122,6 +1180,91 @@ export default function Storefront({ user }: StorefrontProps) {
             </div>
          </motion.button>
       </div>
+
+      {/* Cart Slide-Over Panel */}
+      <AnimatePresence>
+        {isCartOpen && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              className="fixed inset-0 bg-black/60 z-[70] backdrop-blur-sm" 
+              onClick={() => setIsCartOpen(false)} 
+            />
+            <motion.div 
+              initial={{ x: '100%' }} 
+              animate={{ x: 0 }} 
+              exit={{ x: '100%' }} 
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white z-[80] shadow-2xl flex flex-col"
+            >
+              <div className="p-6 bg-[#081621] text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <ShoppingBag className="text-[#ef4a23]" />
+                  <div>
+                    <h2 className="text-lg font-bold">Your Cart</h2>
+                    <p className="text-xs text-white/60 font-mono uppercase">{cartItems.length} Items</p>
+                  </div>
+                </div>
+                <button onClick={() => setIsCartOpen(false)} className="p-2 bg-white/10 hover:bg-[#ef4a23] rounded-lg transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                {cartItems.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                    <ShoppingCart size={48} className="opacity-20" />
+                    <p>Your cart is empty.</p>
+                  </div>
+                ) : (
+                  cartWithQuantities.map((item, idx) => (
+                    <div key={idx} className="flex gap-4 border-b border-slate-100 pb-4">
+                      <div className="w-16 h-16 bg-slate-50 border border-slate-200 rounded-lg shrink-0 flex items-center justify-center p-2">
+                        {item.imageUrl ? <img src={item.imageUrl} alt={item.name} className="max-h-full max-w-full object-contain" /> : <Package className="text-slate-300" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-800 line-clamp-2 leading-tight">{item.name}</p>
+                        <p className="text-xs text-slate-500 mt-1">Qty: <span className="font-bold text-slate-900">{item.quantity}</span></p>
+                        <p className="text-[#ef4a23] font-bold mt-1">৳{(item.price * item.quantity).toLocaleString()}</p>
+                      </div>
+                      <button 
+                        onClick={() => removeFromCart(item.id)} 
+                        className="p-2 text-slate-400 hover:text-red-500 self-start hover:bg-red-50 rounded-lg transition-colors"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {cartItems.length > 0 && (
+                <div className="p-6 bg-slate-50 border-t border-slate-200 shrink-0 space-y-3 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.05)]">
+                  <div className="flex justify-between font-black text-slate-800 text-lg mb-2">
+                    <span>Total Estimate:</span>
+                    <span className="text-[#ef4a23]">৳{cartWithQuantities.reduce((acc, item) => acc + (item.price * item.quantity), 0).toLocaleString()}</span>
+                  </div>
+                  <button 
+                    onClick={handleCartCheckout} 
+                    className="w-full py-4 bg-[#ef4a23] hover:bg-[#d8401e] text-white font-black uppercase tracking-wider rounded-xl shadow-lg shadow-[#ef4a23]/30 transition-transform hover:-translate-y-0.5 flex items-center justify-center gap-2"
+                  >
+                    <ShoppingCart size={20} />
+                    Checkout to WhatsApp
+                  </button>
+                   <button 
+                    onClick={() => setCartItems([])} 
+                    className="w-full py-3 bg-white text-slate-500 hover:text-slate-800 font-bold uppercase text-xs tracking-wider rounded-xl border border-slate-200 transition-colors"
+                  >
+                    Clear Cart
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
     </div>
   );

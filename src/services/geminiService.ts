@@ -1,6 +1,17 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiInstance: GoogleGenAI | null = null;
+
+function getAiClient(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("Missing Gemini API Key. Please set VITE_GEMINI_API_KEY in your Vercel project settings.");
+    }
+    aiInstance = new GoogleGenAI({ apiKey: apiKey });
+  }
+  return aiInstance;
+}
 
 export interface GeneratedProductInfo {
   description: string;
@@ -13,6 +24,7 @@ export async function generateProductInfo(productName: string, category: string)
   The style should be similar to premium tech retailers like Startech or Apple. 
   Focus on quality, performance, and user benefits.`;
 
+  const ai = getAiClient();
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: prompt,

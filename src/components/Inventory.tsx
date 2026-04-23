@@ -1840,81 +1840,32 @@ export default function Inventory({ products, settings }: InventoryProps) {
 
                     const printContent = printRef.current.innerHTML;
                     
-                    try {
-                      const printFrame = document.createElement('iframe');
-                      printFrame.style.position = 'fixed';
-                      printFrame.style.left = '-9999px';
-                      printFrame.style.top = '-9999px';
-                      printFrame.style.width = '1px';
-                      printFrame.style.height = '1px';
-                      document.body.appendChild(printFrame);
-
-                      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
-                      if (!frameDoc) throw new Error("Could not access iframe document");
-
-                      frameDoc.open();
-                      frameDoc.write(`
-                        <!DOCTYPE html>
-                        <html>
-                          <head>
-                            <title>Print Labels</title>
-                            <style>
-                              @page { 
-                                size: 38mm 28mm; 
-                                margin: 0; 
-                              }
-                              html, body { 
-                                margin: 0; 
-                                padding: 0; 
-                                width: 38mm; 
-                                height: 28mm;
-                                background: white;
-                              }
-                              .print-container { 
-                                display: block;
-                                width: 38mm;
-                              }
-                              .label-page {
-                                width: 38mm;
-                                height: 28mm;
-                                display: flex;
-                                flex-direction: column;
-                                align-items: center;
-                                justify-content: center;
-                                page-break-after: always;
-                                overflow: hidden;
-                                box-sizing: border-box;
-                                padding: 1.5mm;
-                              }
-                              * {
-                                color: black !important;
-                                -webkit-print-color-adjust: exact;
-                                print-color-adjust: exact;
-                              }
-                            </style>
-                          </head>
-                          <body>
-                            <div class="print-container">${printContent}</div>
-                            <script>
-                              window.onload = function() {
-                                setTimeout(function() {
-                                  window.print();
-                                }, 500);
-                              };
-                            </script>
-                          </body>
-                        </html>
-                      `);
-                      frameDoc.close();
-                      
-                      setTimeout(() => {
-                        if (document.body.contains(printFrame)) {
-                          document.body.removeChild(printFrame);
-                        }
-                      }, 30000);
-                    } catch (e) {
-                      setError("Printing failed. Connection issue or browser restriction.");
-                    }
+                    
+    let printDiv = document.getElementById('global-print-container');
+    if (!printDiv) {
+      printDiv = document.createElement('div');
+      printDiv.id = 'global-print-container';
+      printDiv.className = 'print-only';
+      document.body.appendChild(printDiv);
+    }
+    
+    // Explicit styles for labels inside the container so they override generic print styles
+    printDiv.innerHTML = `
+      <style>
+        @page { size: 38mm 28mm !important; margin: 0 !important; }
+        .label-page { width: 38mm; height: 28mm; display: flex; flex-direction: column; align-items: center; justify-content: center; page-break-after: always; overflow: hidden; box-sizing: border-box; padding: 1.5mm; }
+        #global-print-container * { color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      </style>
+      <div style="width:38mm; background:white; color:black;">${printContent}</div>
+    `;
+    
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        if (printDiv) printDiv.innerHTML = '';
+      }, 500);
+    }, 100);
+  
                   }}
                   className="flex-1 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 dark:shadow-none flex items-center justify-center gap-2"
                 >
