@@ -18,25 +18,22 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+.global-print-container {
+  display: none;
+}
+
 @media print {
-  body * {
-    visibility: hidden;
+  #root {
+    display: none !important;
   }
-  .print-only, .print-only * {
-    visibility: visible;
-  }
-  .print-only {
+  .global-print-container {
+    display: block !important;
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     background: white;
     z-index: 99999;
-    display: block !important;
-    box-shadow: none !important;
-    border: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
   }
   @page {
     margin: 1cm;

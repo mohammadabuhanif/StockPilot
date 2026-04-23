@@ -1764,9 +1764,10 @@ export default function Inventory({ products, settings }: InventoryProps) {
       {printingProduct && (
         <>
           {/* UI Modal (Hidden during print) */}
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60] print:hidden">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
-              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[60] print:hidden overflow-y-auto">
+            <div className="min-h-full flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+                <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">Print Barcode</h3>
                 <button onClick={() => { setPrintingProduct(null); setPrintQuantity(1); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                   <X size={20} />
@@ -1806,11 +1807,11 @@ export default function Inventory({ products, settings }: InventoryProps) {
                   
                   {/* Preview Box */}
                   <div className="bg-white border border-slate-200 shadow-sm p-2 flex flex-col items-center justify-center w-[152px] h-[112px] overflow-hidden">
-                    <div className="w-full text-center flex flex-col items-center justify-center">
-                      <p className="text-[9px] font-black text-black uppercase tracking-wider m-0 leading-none">{settings?.shopName || 'SMART DIGITAL CARE'}</p>
-                      <p className="text-[11px] font-black text-black uppercase truncate w-full m-0 mt-1 leading-tight">{printingProduct.name}</p>
+                    <div className="w-full text-center flex flex-col items-center justify-center px-1">
+                      <p className="text-[10px] font-black text-black uppercase tracking-wider m-0 leading-none truncate w-full">{settings?.shopName || 'SMART DIGITAL CARE'}</p>
+                      <p className="text-[13px] font-black text-black uppercase truncate w-full m-0 mt-1.5 leading-tight">{printingProduct.name}</p>
                     </div>
-                    <div className="scale-[0.8] origin-top mt-1">
+                    <div className="scale-[0.8] origin-top mt-1.5">
                       <BarcodeGenerator 
                         value={printingProduct.barcode || printingProduct.sku || printingProduct.id.slice(0, 8).toUpperCase()} 
                         format="CODE128"
@@ -1841,11 +1842,11 @@ export default function Inventory({ products, settings }: InventoryProps) {
                     const printContent = printRef.current.innerHTML;
                     
                     
-    let printDiv = document.getElementById('global-print-container');
+    let printDiv = document.querySelector('.temp-print-container') as HTMLDivElement;
     if (!printDiv) {
       printDiv = document.createElement('div');
-      printDiv.id = 'global-print-container';
-      printDiv.className = 'print-only';
+      printDiv.className = 'global-print-container temp-print-container';
+      
       document.body.appendChild(printDiv);
     }
     
@@ -1853,8 +1854,31 @@ export default function Inventory({ products, settings }: InventoryProps) {
     printDiv.innerHTML = `
       <style>
         @page { size: 38mm 28mm !important; margin: 0 !important; }
-        .label-page { width: 38mm; height: 28mm; display: flex; flex-direction: column; align-items: center; justify-content: center; page-break-after: always; overflow: hidden; box-sizing: border-box; padding: 1.5mm; }
-        #global-print-container * { color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .label-page { 
+          width: 38mm; 
+          height: 28mm; 
+          display: flex; 
+          flex-direction: column; 
+          align-items: center; 
+          justify-content: center; 
+          page-break-after: always; 
+          overflow: hidden; 
+          box-sizing: border-box; 
+          padding: 1mm 2mm; 
+          background: white;
+        }
+        .label-text {
+          width: 100%;
+          text-align: center;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          margin: 0;
+          padding: 0;
+          color: black !important;
+          text-transform: uppercase;
+        }
+        .global-print-container * { color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       </style>
       <div style="width:38mm; background:white; color:black;">${printContent}</div>
     `;
@@ -1875,18 +1899,19 @@ export default function Inventory({ products, settings }: InventoryProps) {
               </div>
             </div>
           </div>
+          </div>
 
           {/* Actual Printable Area (Only visible during print) */}
-          <div ref={printRef} className="opacity-0 pointer-events-none absolute -z-50 flex flex-col items-center w-full bg-white">
+          <div ref={printRef} className="hidden">
             {Array.from({ length: printQuantity }).map((_, i) => (
               <div key={i} className="label-page">
-                <div className="w-full text-center">
-                  <p style={{ fontSize: '7pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0', lineHeight: '1' }}>{settings?.shopName || 'SMART DIGITAL CARE'}</p>
-                </div>
-                <div className="w-full text-center" style={{ margin: '1mm 0' }}>
-                  <p style={{ fontSize: '9pt', fontWeight: '900', textTransform: 'uppercase', margin: '0', lineHeight: '1.1', textAlign: 'center' }}>{printingProduct.name}</p>
-                </div>
-                <div style={{ transform: 'scale(0.8)', transformOrigin: 'top center' }}>
+                <p className="label-text" style={{ fontSize: '8pt', fontWeight: '900', letterSpacing: '0.02em', lineHeight: '1.1' }}>
+                  {settings?.shopName || 'SMART DIGITAL CARE'}
+                </p>
+                <p className="label-text" style={{ fontSize: '10.5pt', fontWeight: '900', lineHeight: '1.2', marginTop: '0.5mm' }}>
+                  {printingProduct.name}
+                </p>
+                <div style={{ transform: 'scale(0.85)', transformOrigin: 'top center', marginTop: '1mm' }}>
                   <BarcodeGenerator 
                     value={printingProduct.barcode || printingProduct.sku || printingProduct.id.slice(0, 8).toUpperCase()} 
                     format="CODE128"

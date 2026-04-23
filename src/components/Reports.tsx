@@ -53,11 +53,11 @@ export default function Reports({ products, sales, serviceOrders, expenses, cust
 
 
   const printGlobalHtml = (bodyHtml: string, styleHtml: string = '') => {
-    let printDiv = document.getElementById('global-print-container');
+    let printDiv = document.querySelector('.temp-print-container') as HTMLDivElement;
     if (!printDiv) {
       printDiv = document.createElement('div');
-      printDiv.id = 'global-print-container';
-      printDiv.className = 'print-only';
+      printDiv.className = 'global-print-container temp-print-container';
+      
       document.body.appendChild(printDiv);
     }
     printDiv.innerHTML = styleHtml + '<div style="background:white; color:black; width:100%; height:100%;">' + bodyHtml + '</div>';
@@ -93,7 +93,7 @@ export default function Reports({ products, sales, serviceOrders, expenses, cust
     const styleHtml = `<style>
         @page { size: 38mm 28mm !important; margin: 0 !important; }
         .label-page { width: 38mm; height: 28mm; display: flex; flex-direction: column; align-items: center; justify-content: center; page-break-after: always; overflow: hidden; box-sizing: border-box; padding: 1.5mm; background: white; color: black; }
-        #global-print-container * { color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .global-print-container * { color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     </style>`;
     
     printGlobalHtml(bodyHtml, styleHtml);

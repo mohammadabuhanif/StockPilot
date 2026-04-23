@@ -227,11 +227,11 @@ export default function ServiceCenter({ settings }: { settings: Settings | null 
     `;
 
     
-    let printDiv = document.getElementById('global-print-container');
+    let printDiv = document.querySelector('.temp-print-container') as HTMLDivElement;
     if (!printDiv) {
       printDiv = document.createElement('div');
-      printDiv.id = 'global-print-container';
-      printDiv.className = 'print-only';
+      printDiv.className = 'global-print-container temp-print-container';
+      
       document.body.appendChild(printDiv);
     }
     // Extract body and style from the html string

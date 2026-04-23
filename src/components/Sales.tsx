@@ -392,10 +392,49 @@ export default function Sales({ products, sales, customers, services, settings }
 
   const handlePrint = (customSale?: any) => {
     if (customSale) {
-      setLastSale(customSale);
+      const isFirestoreSale = customSale.productName !== undefined;
+      
+      if (isFirestoreSale) {
+        setLastSale({
+          items: [{
+            product: { 
+              name: customSale.productName, 
+              price: customSale.unitPrice,
+              id: customSale.productId
+            } as any,
+            quantity: customSale.quantity,
+            negotiatedPrice: customSale.unitPrice
+          }],
+          total: customSale.totalPrice,
+          received: customSale.totalPrice,
+          change: 0,
+          customer: customSale.customerName ? { name: customSale.customerName, phone: '' } as any : null,
+          timestamp: customSale.timestamp?.toDate ? customSale.timestamp.toDate() : new Date(),
+          discount: customSale.discount || 0
+        });
+      } else {
+        setLastSale(customSale);
+      }
     }
     setTimeout(() => {
-      window.print();
+      const receiptContent = document.getElementById('sales-receipt-content')?.innerHTML;
+      if (receiptContent) {
+        let printDiv = document.querySelector('.temp-print-container') as HTMLDivElement;
+        if (!printDiv) {
+          printDiv = document.createElement('div');
+          printDiv.className = 'global-print-container temp-print-container';
+          document.body.appendChild(printDiv);
+        }
+        printDiv.innerHTML = receiptContent;
+        setTimeout(() => {
+          window.print();
+          setTimeout(() => {
+            if (printDiv) printDiv.innerHTML = '';
+          }, 1000);
+        }, 100);
+      } else {
+        window.print(); // Fallback
+      }
     }, 100);
   };
   
@@ -1089,37 +1128,46 @@ export default function Sales({ products, sales, customers, services, settings }
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col print-only"
+              className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col"
             >
-              <div className="p-6 text-center border-b border-dashed border-slate-200 dark:border-slate-800 relative">
-                <img 
-                  src="https://i.ibb.co/cX7qP4n6/Picsart-26-04-10-02-09-25-057.png" 
-                  alt="Logo" 
-                  className="w-32 h-auto mx-auto mb-4 hidden print:block" 
-                  referrerPolicy="no-referrer" 
-                />
-                <div className="print:hidden w-16 h-16 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle2 size={32} />
+              <div id="sales-receipt-content" className="bg-white text-black font-sans">
+                <style>{`
+                  @media print {
+                    #sales-receipt-content { background: white !important; color: black !important; width: 80mm; margin: 0 auto; padding: 10px; font-size: 12px; }
+                    #sales-receipt-content * { color: black !important; }
+                    .print-hidden-element { display: none !important; }
+                    .print-visible-element { display: block !important; }
+                  }
+                `}</style>
+                <div className="p-6 text-center border-b border-dashed border-slate-200 relative">
+                  <img 
+                    src="https://i.ibb.co/cX7qP4n6/Picsart-26-04-10-02-09-25-057.png" 
+                    alt="Logo" 
+                    className="w-32 h-auto mx-auto mb-4 hidden print-visible-element" 
+                    referrerPolicy="no-referrer" 
+                  />
+                  <div className="print-hidden-element w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle2 size={32} />
+                  </div>
+                  <h2 className="text-2xl font-black mb-1 uppercase tracking-tight">
+                    {settings?.shopName || 'DIGITAL SHOP'}
+                  </h2>
+                  <p className="text-[10px] uppercase tracking-widest font-bold">Cash Memo</p>
+                  {settings?.shopAddress && (
+                    <p className="text-[8px] mt-1 max-w-[200px] mx-auto leading-tight">{settings.shopAddress}</p>
+                  )}
+                  {settings?.shopPhone && (
+                    <p className="text-[8px] mt-0.5">Phone: {settings.shopPhone}</p>
+                  )}
+                  <button 
+                    onClick={() => setLastSale(null)}
+                    className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 print-hidden-element"
+                  >
+                    <X size={20} />
+                  </button>
                 </div>
-                <h2 className="text-2xl font-black text-slate-900 dark:text-white mb-1 uppercase tracking-tight">
-                  {settings?.shopName || 'DIGITAL SHOP'}
-                </h2>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-bold">Cash Memo</p>
-                {settings?.shopAddress && (
-                  <p className="text-[8px] text-slate-400 mt-1 max-w-[200px] mx-auto leading-tight">{settings.shopAddress}</p>
-                )}
-                {settings?.shopPhone && (
-                  <p className="text-[8px] text-slate-400 mt-0.5">Phone: {settings.shopPhone}</p>
-                )}
-                <button 
-                  onClick={() => setLastSale(null)}
-                  className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 print:hidden"
-                >
-                  <X size={20} />
-                </button>
-              </div>
 
-              <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto font-mono print:max-h-none print:overflow-visible">
+                <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto font-mono" style={{ maxHeight: 'none', overflow: 'visible' }}>
                 <div className="flex justify-between text-[10px] text-slate-500">
                   <span>Date: {format(lastSale.timestamp, 'yyyy-MM-dd')}</span>
                   <span>Time: {formatAppTime(lastSale.timestamp)}</span>
@@ -1174,6 +1222,7 @@ export default function Sales({ products, sales, customers, services, settings }
                     </div>
                   </div>
                 </div>
+              </div>
               </div>
 
               <div className="p-6 bg-slate-50 dark:bg-slate-800/50 flex gap-3 print:hidden">
