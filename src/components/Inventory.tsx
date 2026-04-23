@@ -1854,6 +1854,14 @@ export default function Inventory({ products, settings }: InventoryProps) {
     printDiv.innerHTML = `
       <style>
         @page { size: 38mm 28mm !important; margin: 0 !important; }
+        .global-print-container {
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          width: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
         .label-page { 
           width: 38mm; 
           height: 28mm; 
@@ -1880,7 +1888,7 @@ export default function Inventory({ products, settings }: InventoryProps) {
         }
         .global-print-container * { color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       </style>
-      <div style="width:38mm; background:white; color:black;">${printContent}</div>
+      <div style="width: 38mm; margin: 0 auto; background: white; color: black;">${printContent}</div>
     `;
     
     setTimeout(() => {
