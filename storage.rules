@@ -1,10 +1,5 @@
-rules_version = '2';
-service firebase.storage {
-  match /b/{bucket}/o {
-    match /products/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null && 
-                     request.auth.token.email == "abuhanifindiabased@gmail.com";
-    }
-  }
+{
+  "name": "Smart Digital Care (SDC)",
+  "description": "Smart Digital Care (SDC) - Cantonment Board Jame Masjid Market, Cumilla. Premium Digital Products and Services.",
+  "requestFramePermissions": []
 }
